@@ -64,7 +64,7 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.priceText, "--")
                 views.setTextViewText(R.id.changePercentText, "Connexion…")
                 views.setTextViewText(R.id.changePointsText, "")
-                views.setTextViewText(R.id.updatedText, "TOUCHER ↻")
+                views.setTextViewText(R.id.updatedText, "TOUCHER POUR CHANGER")
             } else {
                 val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
                 val priceFormat = DecimalFormat("#,##0.00", symbols)
@@ -72,19 +72,27 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.priceText, priceFormat.format(data.price))
                 views.setTextViewText(R.id.changePercentText, "${signed.format(data.changePercent)}%")
                 views.setTextViewText(R.id.changePointsText, signed.format(data.change))
-                views.setTextViewText(R.id.updatedText, "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(data.updatedAtMillis))}  ●")
+                views.setTextViewText(
+                    R.id.updatedText,
+                    "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(data.updatedAtMillis))} · toucher pour changer"
+                )
                 val trendColor = if (data.change >= 0) Color.rgb(56, 242, 122) else Color.rgb(255, 82, 82)
                 views.setTextColor(R.id.changePercentText, trendColor)
                 views.setTextColor(R.id.changePointsText, trendColor)
                 views.setImageViewBitmap(R.id.chartImage, ChartRenderer.render(data.candles))
             }
 
-            val refreshIntent = Intent(context, NasdaqWidgetProvider::class.java).apply { action = ACTION_REFRESH }
-            val refreshPendingIntent = PendingIntent.getBroadcast(
-                context, id, refreshIntent,
+            val configureIntent = Intent(context, AssetWidgetConfigureActivity::class.java).apply {
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val configurePendingIntent = PendingIntent.getActivity(
+                context,
+                id,
+                configureIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            views.setOnClickPendingIntent(R.id.widgetRoot, refreshPendingIntent)
+            views.setOnClickPendingIntent(R.id.widgetRoot, configurePendingIntent)
             manager.updateAppWidget(id, views)
         }
 
