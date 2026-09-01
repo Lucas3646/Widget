@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">Market Widgets</string>
-    <string name="widget_description">NASDAQ 100 intraday widget</string>
+    <string name="widget_description">Widget de marché 2×2 personnalisable</string>
     <string name="alert_widget_description">Alertes de prix sur vos actifs</string>
+    <string name="mvrv_widget_description">BTC MVRV Z-Score 4×1</string>
 </resources>
