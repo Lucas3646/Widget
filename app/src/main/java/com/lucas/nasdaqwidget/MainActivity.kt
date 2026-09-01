@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(widgetCatalogCard(
             "Alertes marché",
             "4×2",
-            "Conditions personnalisées sur actions, crypto, ETF, forex…",
+            "Prix ou MVRV Z-Score pour BTC, prix pour les autres actifs",
             AlertWidgetProvider::class.java
         ), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(9)
@@ -74,7 +74,7 @@ class MainActivity : AppCompatActivity() {
 
         content.addView(sectionTitle("CRÉER UNE ALERTE").apply { setPadding(0, dp(28), 0, dp(10)) })
         content.addView(TextView(this).apply {
-            text = "Recherche un nom ou un ticker. Exemples : Apple, AAPL, Bitcoin, BTC, Tesla…"
+            text = "Recherche un nom ou un ticker. Pour BTC, tu peux choisir une alerte de prix ou de MVRV Z-Score."
             textSize = 13f
             setTextColor(Color.rgb(142, 160, 178))
             setPadding(0, 0, 0, dp(10))
@@ -152,6 +152,24 @@ class MainActivity : AppCompatActivity() {
             override fun afterTextChanged(s: Editable?) = Unit
         })
 
+        val alertTypeLabel = TextView(this).apply {
+            text = "TYPE D'ALERTE"
+            textSize = 11f
+            setTextColor(Color.rgb(142, 160, 178))
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(4), dp(15), 0, dp(5))
+        }
+        form.addView(alertTypeLabel)
+
+        val alertTypeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf("Prix de l'actif", "MVRV Z-Score · BTC uniquement")
+            )
+        }
+        form.addView(alertTypeSpinner, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)))
+
         val conditionLabel = TextView(this).apply {
             text = "CONDITION"
             textSize = 11f
@@ -172,8 +190,8 @@ class MainActivity : AppCompatActivity() {
         conditionRow.addView(operatorSpinner, LinearLayout.LayoutParams(dp(86), dp(56)))
 
         val thresholdInput = EditText(this).apply {
-            hint = "Prix cible"
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            hint = "Prix ou Z-Score cible"
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
             setSingleLine(true)
             textSize = 17f
             setTextColor(Color.WHITE)
@@ -194,28 +212,46 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 val rawSymbol = selectedAssetSymbol ?: assetInput.text.toString().trim()
                 val threshold = thresholdInput.text.toString().replace(',', '.').toDoubleOrNull()
-                if (rawSymbol.isBlank() || threshold == null || threshold <= 0.0) {
-                    Toast.makeText(this@MainActivity, "Choisis un actif et un prix cible valide", Toast.LENGTH_SHORT).show()
+                if (rawSymbol.isBlank() || threshold == null) {
+                    Toast.makeText(this@MainActivity, "Choisis un actif et une valeur cible valide", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
+
+                val normalizedForCheck = rawSymbol.trim().uppercase().replace(" ", "")
+                val isBtc = normalizedForCheck in setOf("BTC", "BTCUSD", "BTC/USD", "BTC-USD")
+                val wantsMvrv = alertTypeSpinner.selectedItemPosition == 1
+                if (wantsMvrv && !isBtc) {
+                    Toast.makeText(this@MainActivity, "Le MVRV Z-Score est disponible uniquement pour BTC", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                if (!wantsMvrv && threshold <= 0.0) {
+                    Toast.makeText(this@MainActivity, "Le prix cible doit être supérieur à 0", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+
                 val operator = when (operatorSpinner.selectedItem.toString()) {
                     "≤" -> "<="
                     "≥" -> ">="
                     else -> operatorSpinner.selectedItem.toString()
                 }
-                AlertStore.add(this@MainActivity, rawSymbol, operator, threshold)
+                val metric = if (wantsMvrv) AlertRule.METRIC_MVRV else AlertRule.METRIC_PRICE
+                AlertStore.add(this@MainActivity, rawSymbol, operator, threshold, metric)
                 assetInput.setText("", false)
                 thresholdInput.text.clear()
+                alertTypeSpinner.setSelection(0)
                 selectedAssetSymbol = null
                 selectedText.text = "Tape au moins 1 caractère pour rechercher"
                 selectedText.setTextColor(Color.rgb(112, 131, 150))
                 renderAlerts()
                 Thread {
                     AlertMarketRepository.refresh(this@MainActivity)
+                    if (AlertStore.rules(this@MainActivity).any { it.isMvrv() }) {
+                        runCatching { MvrvRepository.refresh(this@MainActivity) }
+                    }
                     AlertWidgetProvider.updateAll(this@MainActivity)
                     runOnUiThread { renderAlerts() }
                 }.start()
-                Toast.makeText(this@MainActivity, "Alerte ajoutée", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, if (wantsMvrv) "Alerte MVRV ajoutée" else "Alerte prix ajoutée", Toast.LENGTH_SHORT).show()
             }
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(14) })
         content.addView(form)
@@ -228,16 +264,19 @@ class MainActivity : AppCompatActivity() {
         content.addView(alertsContainer)
 
         content.addView(Button(this).apply {
-            text = "↻ Actualiser tous les prix"
+            text = "↻ Actualiser toutes les données"
             setOnClickListener {
                 isEnabled = false
                 text = "Actualisation…"
                 Thread {
                     AlertMarketRepository.refresh(this@MainActivity)
+                    if (AlertStore.rules(this@MainActivity).any { it.isMvrv() }) {
+                        runCatching { MvrvRepository.refresh(this@MainActivity) }
+                    }
                     AlertWidgetProvider.updateAll(this@MainActivity)
                     runOnUiThread {
                         isEnabled = true
-                        text = "↻ Actualiser tous les prix"
+                        text = "↻ Actualiser toutes les données"
                         renderAlerts()
                     }
                 }.start()
@@ -277,11 +316,21 @@ class MainActivity : AppCompatActivity() {
 
         val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
         val format = DecimalFormat("#,##0.##", symbols)
+        val zFormat = DecimalFormat("0.00", symbols)
         rules.sortedByDescending { rule ->
-            AlertMarketRepository.cachedPrice(this, rule.symbol)?.let(rule::isTriggered) == true
+            val value = if (rule.isMvrv()) {
+                MvrvRepository.cached(this)?.zScore
+            } else {
+                AlertMarketRepository.cachedPrice(this, rule.symbol)
+            }
+            value?.let(rule::isTriggered) == true
         }.forEach { rule ->
-            val price = AlertMarketRepository.cachedPrice(this, rule.symbol)
-            val triggered = price?.let(rule::isTriggered) == true
+            val value = if (rule.isMvrv()) {
+                MvrvRepository.cached(this)?.zScore
+            } else {
+                AlertMarketRepository.cachedPrice(this, rule.symbol)
+            }
+            val triggered = value?.let(rule::isTriggered) == true
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -295,13 +344,17 @@ class MainActivity : AppCompatActivity() {
             row.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(TextView(this@MainActivity).apply {
-                    text = rule.symbol
+                    text = if (rule.isMvrv()) "BTC · MVRV Z" else rule.symbol
                     textSize = 16f
                     setTextColor(Color.WHITE)
                     setTypeface(typeface, Typeface.BOLD)
                 })
                 addView(TextView(this@MainActivity).apply {
-                    text = "${rule.operator} ${format.format(rule.threshold)}  ·  cours ${price?.let(format::format) ?: "--"}"
+                    text = if (rule.isMvrv()) {
+                        "${rule.operator} ${zFormat.format(rule.threshold)}  ·  Z actuel ${value?.let(zFormat::format) ?: "--"}"
+                    } else {
+                        "${rule.operator} ${format.format(rule.threshold)}  ·  cours ${value?.let(format::format) ?: "--"}"
+                    }
                     textSize = 13f
                     setTextColor(if (triggered) Color.rgb(56, 242, 122) else Color.rgb(142, 160, 178))
                 })
