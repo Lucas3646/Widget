@@ -12,13 +12,21 @@ data class AlertRule(
     val id: Long,
     val symbol: String,
     val operator: String,
-    val threshold: Double
+    val threshold: Double,
+    val metric: String = METRIC_PRICE
 ) {
-    fun isTriggered(price: Double): Boolean = when (operator) {
-        ">" -> price > threshold
-        ">=" -> price >= threshold
-        "<=" -> price <= threshold
-        else -> price < threshold
+    fun isTriggered(value: Double): Boolean = when (operator) {
+        ">" -> value > threshold
+        ">=" -> value >= threshold
+        "<=" -> value <= threshold
+        else -> value < threshold
+    }
+
+    fun isMvrv(): Boolean = metric == METRIC_MVRV
+
+    companion object {
+        const val METRIC_PRICE = "PRICE"
+        const val METRIC_MVRV = "MVRV_Z"
     }
 }
 
@@ -39,7 +47,8 @@ object AlertStore {
                             id = item.getLong("id"),
                             symbol = item.getString("symbol"),
                             operator = item.getString("operator"),
-                            threshold = item.getDouble("threshold")
+                            threshold = item.getDouble("threshold"),
+                            metric = item.optString("metric", AlertRule.METRIC_PRICE)
                         )
                     )
                 }
@@ -47,14 +56,26 @@ object AlertStore {
         }.getOrDefault(emptyList())
     }
 
-    fun add(context: Context, symbol: String, operator: String, threshold: Double) {
+    fun add(
+        context: Context,
+        symbol: String,
+        operator: String,
+        threshold: Double,
+        metric: String = AlertRule.METRIC_PRICE
+    ) {
         val normalized = normalizeSymbol(symbol)
         if (normalized.isBlank()) return
+        val safeMetric = if (metric == AlertRule.METRIC_MVRV && normalized == "BTC-USD") {
+            AlertRule.METRIC_MVRV
+        } else {
+            AlertRule.METRIC_PRICE
+        }
         val updated = rules(context) + AlertRule(
             id = System.currentTimeMillis(),
             symbol = normalized,
             operator = operator,
-            threshold = threshold
+            threshold = threshold,
+            metric = safeMetric
         )
         save(context, updated)
     }
@@ -71,6 +92,7 @@ object AlertStore {
                 put("symbol", rule.symbol)
                 put("operator", rule.operator)
                 put("threshold", rule.threshold)
+                put("metric", rule.metric)
             })
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -82,7 +104,7 @@ object AlertStore {
     private fun normalizeSymbol(input: String): String {
         val value = input.trim().uppercase().replace(" ", "")
         return when (value) {
-            "BTCUSD", "BTC/USD" -> "BTC-USD"
+            "BTCUSD", "BTC/USD", "BTC" -> "BTC-USD"
             "ETHUSD", "ETH/USD" -> "ETH-USD"
             else -> value
         }
@@ -93,7 +115,11 @@ object AlertMarketRepository {
     private const val PREFS = "market_alert_prices"
 
     fun refresh(context: Context): Map<String, Double> {
-        val symbols = AlertStore.rules(context).map { it.symbol }.distinct()
+        val rules = AlertStore.rules(context)
+        val symbols = buildSet {
+            rules.filterNot { it.isMvrv() }.forEach { add(it.symbol) }
+            if (rules.any { it.isMvrv() }) add("BTC-USD")
+        }
         val result = mutableMapOf<String, Double>()
         symbols.forEach { symbol ->
             runCatching { fetchPrice(symbol) }
