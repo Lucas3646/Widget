@@ -40,6 +40,10 @@ class AlertWidgetProvider : AppWidgetProvider() {
     companion object {
         private const val ACTION_REFRESH_ALERTS = "com.lucas.nasdaqwidget.REFRESH_ALERTS"
         private val rowIds = intArrayOf(R.id.alertRow1, R.id.alertRow2, R.id.alertRow3, R.id.alertRow4)
+        private val symbolIds = intArrayOf(R.id.alertSymbol1, R.id.alertSymbol2, R.id.alertSymbol3, R.id.alertSymbol4)
+        private val conditionIds = intArrayOf(R.id.alertCondition1, R.id.alertCondition2, R.id.alertCondition3, R.id.alertCondition4)
+        private val priceIds = intArrayOf(R.id.alertPrice1, R.id.alertPrice2, R.id.alertPrice3, R.id.alertPrice4)
+        private val stateIds = intArrayOf(R.id.alertState1, R.id.alertState2, R.id.alertState3, R.id.alertState4)
 
         fun updateAll(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
@@ -49,35 +53,65 @@ class AlertWidgetProvider : AppWidgetProvider() {
 
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_alerts)
-            val rules = AlertStore.rules(context).take(4)
+            val allRules = AlertStore.rules(context)
+            val decorated = allRules.map { rule ->
+                val price = AlertMarketRepository.cachedPrice(context, rule.symbol)
+                Triple(rule, price, price?.let(rule::isTriggered) == true)
+            }
+            val shown = decorated.sortedWith(
+                compareByDescending<Triple<AlertRule, Double?, Boolean>> { it.third }
+                    .thenBy { it.first.id }
+            ).take(4)
+
             val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
             val priceFormat = DecimalFormat("#,##0.##", symbols)
+            val triggeredCount = decorated.count { it.third }
 
             rowIds.forEach { views.setViewVisibility(it, View.GONE) }
+            views.setTextViewText(
+                R.id.alertSummaryText,
+                when {
+                    allRules.isEmpty() -> "Aucune règle configurée"
+                    triggeredCount == 0 -> "${allRules.size} règle${if (allRules.size > 1) "s" else ""} surveillée${if (allRules.size > 1) "s" else ""}"
+                    triggeredCount == 1 -> "1 alerte déclenchée"
+                    else -> "$triggeredCount alertes déclenchées"
+                }
+            )
+            views.setTextColor(
+                R.id.alertSummaryText,
+                if (triggeredCount > 0) Color.rgb(56, 242, 122) else Color.rgb(142, 160, 178)
+            )
 
-            if (rules.isEmpty()) {
+            if (shown.isEmpty()) {
                 views.setViewVisibility(R.id.emptyText, View.VISIBLE)
             } else {
                 views.setViewVisibility(R.id.emptyText, View.GONE)
-                rules.forEachIndexed { index, rule ->
-                    val rowId = rowIds[index]
-                    val price = AlertMarketRepository.cachedPrice(context, rule.symbol)
-                    val triggered = price?.let(rule::isTriggered) == true
+                shown.forEachIndexed { index, item ->
+                    val rule = item.first
+                    val price = item.second
+                    val triggered = item.third
                     val priceLabel = price?.let(priceFormat::format) ?: "--"
                     val thresholdLabel = priceFormat.format(rule.threshold)
-                    val state = if (triggered) "✓" else "•"
-                    views.setTextViewText(rowId, "${rule.symbol}  ${rule.operator} $thresholdLabel   $priceLabel  $state")
-                    views.setTextColor(
-                        rowId,
-                        if (triggered) Color.rgb(56, 242, 122) else Color.rgb(225, 231, 239)
+
+                    views.setTextViewText(symbolIds[index], rule.symbol)
+                    views.setTextViewText(conditionIds[index], "${rule.operator} $thresholdLabel")
+                    views.setTextViewText(priceIds[index], priceLabel)
+                    views.setTextViewText(stateIds[index], if (triggered) "✓" else "○")
+                    views.setTextColor(conditionIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.rgb(142, 160, 178))
+                    views.setTextColor(priceIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.WHITE)
+                    views.setTextColor(stateIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.rgb(102, 120, 138))
+                    views.setInt(
+                        rowIds[index],
+                        "setBackgroundResource",
+                        if (triggered) R.drawable.alert_row_triggered_background else R.drawable.alert_row_background
                     )
-                    views.setViewVisibility(rowId, View.VISIBLE)
+                    views.setViewVisibility(rowIds[index], View.VISIBLE)
                 }
             }
 
             val updatedAt = AlertMarketRepository.lastUpdated(context)
             val updatedLabel = if (updatedAt > 0) {
-                "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(updatedAt))} • toucher pour actualiser"
+                "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(updatedAt))} · toucher pour actualiser"
             } else {
                 "Touchez pour charger les prix"
             }
