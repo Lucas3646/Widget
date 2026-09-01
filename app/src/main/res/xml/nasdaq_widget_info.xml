@@ -8,4 +8,6 @@
     android:widgetCategory="home_screen"
     android:initialLayout="@layout/widget_nasdaq"
     android:description="@string/widget_description"
+    android:configure="com.lucas.nasdaqwidget.AssetWidgetConfigureActivity"
+    android:widgetFeatures="configuration_optional|reconfigurable"
     android:updatePeriodMillis="0" />
