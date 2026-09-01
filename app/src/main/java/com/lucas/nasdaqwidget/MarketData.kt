@@ -4,6 +4,8 @@ import android.content.Context
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 data class MarketData(
     val price: Double,
@@ -14,18 +16,17 @@ data class MarketData(
 )
 
 object MarketRepository {
-    private const val PREFS = "nasdaq_widget_market"
-    private const val SYMBOL = "%5ENDX"
-    private const val ENDPOINT =
-        "https://query1.finance.yahoo.com/v8/finance/chart/$SYMBOL?range=1d&interval=5m&includePrePost=false"
+    private const val PREFS = "market_widget_market"
 
-    fun fetchAndCache(context: Context): MarketData {
-        val connection = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
+    fun fetchAndCache(context: Context, symbol: String): MarketData {
+        val encoded = URLEncoder.encode(symbol, StandardCharsets.UTF_8.toString())
+        val endpoint = "https://query1.finance.yahoo.com/v8/finance/chart/$encoded?range=1d&interval=5m&includePrePost=true"
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
             readTimeout = 10_000
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "NasdaqWidget/1.0 Android")
+            setRequestProperty("User-Agent", "MarketWidgets/1.2 Android")
         }
 
         try {
@@ -49,9 +50,7 @@ object MarketRepository {
 
             val price = if (meta.has("regularMarketPrice") && !meta.isNull("regularMarketPrice")) {
                 meta.getDouble("regularMarketPrice")
-            } else {
-                candles.last().toDouble()
-            }
+            } else candles.last().toDouble()
 
             val previousClose = when {
                 meta.has("chartPreviousClose") && !meta.isNull("chartPreviousClose") -> meta.getDouble("chartPreviousClose")
@@ -67,38 +66,42 @@ object MarketRepository {
                 changePercent = changePercent,
                 candles = candles,
                 updatedAtMillis = System.currentTimeMillis()
-            ).also { save(context, it) }
+            ).also { save(context, symbol, it) }
         } finally {
             connection.disconnect()
         }
     }
 
-    fun cached(context: Context): MarketData? {
+    fun cached(context: Context, symbol: String): MarketData? {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (!prefs.contains("price")) return null
-        val candles = prefs.getString("candles", null)
+        val key = safeKey(symbol)
+        if (!prefs.contains("price_$key")) return null
+        val candles = prefs.getString("candles_$key", null)
             ?.split(',')
             ?.mapNotNull { it.toFloatOrNull() }
             .orEmpty()
         if (candles.isEmpty()) return null
 
         return MarketData(
-            price = Double.fromBits(prefs.getLong("price", 0L)),
-            change = Double.fromBits(prefs.getLong("change", 0L)),
-            changePercent = Double.fromBits(prefs.getLong("changePercent", 0L)),
+            price = Double.fromBits(prefs.getLong("price_$key", 0L)),
+            change = Double.fromBits(prefs.getLong("change_$key", 0L)),
+            changePercent = Double.fromBits(prefs.getLong("changePercent_$key", 0L)),
             candles = candles,
-            updatedAtMillis = prefs.getLong("updatedAt", 0L)
+            updatedAtMillis = prefs.getLong("updatedAt_$key", 0L)
         )
     }
 
-    private fun save(context: Context, data: MarketData) {
+    private fun save(context: Context, symbol: String, data: MarketData) {
+        val key = safeKey(symbol)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
-            .putLong("price", data.price.toBits())
-            .putLong("change", data.change.toBits())
-            .putLong("changePercent", data.changePercent.toBits())
-            .putString("candles", data.candles.joinToString(","))
-            .putLong("updatedAt", data.updatedAtMillis)
+            .putLong("price_$key", data.price.toBits())
+            .putLong("change_$key", data.change.toBits())
+            .putLong("changePercent_$key", data.changePercent.toBits())
+            .putString("candles_$key", data.candles.joinToString(","))
+            .putLong("updatedAt_$key", data.updatedAtMillis)
             .apply()
     }
+
+    private fun safeKey(symbol: String): String = symbol.replace(Regex("[^A-Za-z0-9_-]"), "_")
 }
