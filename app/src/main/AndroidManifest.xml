@@ -10,6 +10,14 @@
         android:theme="@style/Theme.NasdaqWidget">
 
         <activity
+            android:name=".AssetWidgetConfigureActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
