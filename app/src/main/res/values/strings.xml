@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">NASDAQ Widget</string>
+    <string name="widget_description">NASDAQ 100 intraday widget</string>
+</resources>
