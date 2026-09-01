@@ -123,6 +123,38 @@
         <TextView android:id="@+id/alertState4" android:layout_width="24dp" android:layout_height="wrap_content" android:gravity="end" android:text="○" android:textColor="#66788A" android:textSize="16sp" />
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/mvrvStrip"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="5dp"
+        android:background="@drawable/alert_row_background"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/mvrvValueText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:text="MVRV Z --"
+            android:textColor="#50BFFF"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/mvrvZoneText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:maxLines="1"
+            android:text="Zone Z7 · estimation indisponible"
+            android:textColor="#CDD8E4"
+            android:textSize="10sp" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/alertUpdatedText"
         android:layout_width="match_parent"
