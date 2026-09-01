@@ -32,7 +32,7 @@ class AlertWidgetProvider : AppWidgetProvider() {
         if (intent.action == ACTION_REFRESH_ALERTS) {
             Thread {
                 AlertMarketRepository.refresh(context)
-                if (AlertStore.rules(context).any { it.symbol == "BTC-USD" }) {
+                if (AlertStore.rules(context).any { it.isMvrv() }) {
                     runCatching { MvrvRepository.refresh(context) }
                 }
                 updateAll(context)
@@ -57,24 +57,31 @@ class AlertWidgetProvider : AppWidgetProvider() {
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_alerts)
             val allRules = AlertStore.rules(context)
-            val hasBtc = allRules.any { it.symbol == "BTC-USD" }
+            val hasMvrv = allRules.any { it.isMvrv() }
+            val mvrvSnapshot = if (hasMvrv) MvrvRepository.cached(context) else null
+
             val decorated = allRules.map { rule ->
-                val price = AlertMarketRepository.cachedPrice(context, rule.symbol)
-                Triple(rule, price, price?.let(rule::isTriggered) == true)
+                val value = if (rule.isMvrv()) {
+                    mvrvSnapshot?.zScore
+                } else {
+                    AlertMarketRepository.cachedPrice(context, rule.symbol)
+                }
+                Triple(rule, value, value?.let(rule::isTriggered) == true)
             }
             val shown = decorated.sortedWith(
                 compareByDescending<Triple<AlertRule, Double?, Boolean>> { it.third }
                     .thenBy { it.first.id }
-            ).take(if (hasBtc) 3 else 4)
+            ).take(if (hasMvrv) 3 else 4)
 
             val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
-            val priceFormat = DecimalFormat("#,##0.##", symbols)
+            val valueFormat = DecimalFormat("#,##0.##", symbols)
             val compactPriceFormat = DecimalFormat("#,##0", symbols)
+            val zFormat = DecimalFormat("0.00", symbols)
             val oneDecimal = DecimalFormat("0.0", symbols)
             val triggeredCount = decorated.count { it.third }
 
             rowIds.forEach { views.setViewVisibility(it, View.GONE) }
-            views.setViewVisibility(R.id.mvrvStrip, if (hasBtc) View.VISIBLE else View.GONE)
+            views.setViewVisibility(R.id.mvrvStrip, if (hasMvrv) View.VISIBLE else View.GONE)
             views.setTextViewText(
                 R.id.alertSummaryText,
                 when {
@@ -95,14 +102,18 @@ class AlertWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.emptyText, View.GONE)
                 shown.forEachIndexed { index, item ->
                     val rule = item.first
-                    val price = item.second
+                    val value = item.second
                     val triggered = item.third
-                    val priceLabel = price?.let(priceFormat::format) ?: "--"
-                    val thresholdLabel = priceFormat.format(rule.threshold)
+                    val currentLabel = if (rule.isMvrv()) {
+                        value?.let(zFormat::format) ?: "--"
+                    } else {
+                        value?.let(valueFormat::format) ?: "--"
+                    }
+                    val thresholdLabel = if (rule.isMvrv()) zFormat.format(rule.threshold) else valueFormat.format(rule.threshold)
 
-                    views.setTextViewText(symbolIds[index], rule.symbol)
+                    views.setTextViewText(symbolIds[index], if (rule.isMvrv()) "BTC MVRV" else rule.symbol)
                     views.setTextViewText(conditionIds[index], "${rule.operator} $thresholdLabel")
-                    views.setTextViewText(priceIds[index], priceLabel)
+                    views.setTextViewText(priceIds[index], currentLabel)
                     views.setTextViewText(stateIds[index], if (triggered) "✓" else "○")
                     views.setTextColor(conditionIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.rgb(142, 160, 178))
                     views.setTextColor(priceIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.WHITE)
@@ -116,8 +127,8 @@ class AlertWidgetProvider : AppWidgetProvider() {
                 }
             }
 
-            if (hasBtc) {
-                val snapshot = MvrvRepository.cached(context)
+            if (hasMvrv) {
+                val snapshot = mvrvSnapshot
                 val liveBtc = AlertMarketRepository.cachedPrice(context, "BTC-USD")
                 if (snapshot == null) {
                     views.setTextViewText(R.id.mvrvValueText, "MVRV Z --")
@@ -127,8 +138,9 @@ class AlertWidgetProvider : AppWidgetProvider() {
                 } else {
                     val zoneLabel = MvrvRepository.zoneLabel(snapshot.zScore)
                     val zonePrice = snapshot.estimatedHighZonePrice
-                    val distancePct = if (zonePrice != null && liveBtc != null && liveBtc > 0.0) {
-                        (zonePrice / liveBtc - 1.0) * 100.0
+                    val referenceBtc = liveBtc ?: snapshot.sourcePrice
+                    val distancePct = if (zonePrice != null && referenceBtc != null && referenceBtc > 0.0) {
+                        (zonePrice / referenceBtc - 1.0) * 100.0
                     } else null
                     val zoneColor = when {
                         snapshot.zScore >= MvrvRepository.highZoneZ() -> Color.rgb(255, 82, 82)
@@ -150,11 +162,14 @@ class AlertWidgetProvider : AppWidgetProvider() {
                 }
             }
 
-            val updatedAt = AlertMarketRepository.lastUpdated(context)
+            val updatedAt = maxOf(
+                AlertMarketRepository.lastUpdated(context),
+                mvrvSnapshot?.updatedAtMillis ?: 0L
+            )
             val updatedLabel = if (updatedAt > 0) {
                 "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(updatedAt))} · toucher pour actualiser"
             } else {
-                "Touchez pour charger les prix"
+                "Touchez pour charger les données"
             }
             views.setTextViewText(R.id.alertUpdatedText, updatedLabel)
 
