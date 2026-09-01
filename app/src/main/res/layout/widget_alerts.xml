@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
+    android:padding="14dp"
     android:background="@drawable/widget_background">
 
     <LinearLayout
@@ -12,21 +12,36 @@
         android:layout_height="wrap_content"
         android:gravity="center_vertical">
 
-        <TextView
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="ALERTES MARCHÉ"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ALERTES MARCHÉ"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/alertSummaryText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:text="0 alerte déclenchée"
+                android:textColor="#8EA0B2"
+                android:textSize="10sp" />
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="LIVE"
+            android:text="● LIVE"
             android:textColor="#38F27A"
-            android:textSize="11sp"
+            android:textSize="10sp"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -36,64 +51,85 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:gravity="center"
-        android:text="Ajoute des alertes depuis l'application"
+        android:text="Ajoute tes alertes depuis Market Widgets"
         android:textColor="#AAB7C4"
-        android:textSize="14sp" />
+        android:textSize="13sp" />
 
-    <TextView
+    <LinearLayout
         android:id="@+id/alertRow1"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:layout_marginTop="5dp"
         android:gravity="center_vertical"
-        android:maxLines="1"
-        android:textColor="#E1E7EF"
-        android:textSize="15sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
+        android:paddingHorizontal="10dp"
+        android:orientation="horizontal"
+        android:background="@drawable/alert_row_background"
+        android:visibility="gone">
+        <TextView android:id="@+id/alertSymbol1" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertCondition1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginHorizontal="8dp" android:maxLines="1" android:textColor="#8EA0B2" android:textSize="12sp" />
+        <TextView android:id="@+id/alertPrice1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertState1" android:layout_width="24dp" android:layout_height="wrap_content" android:gravity="end" android:text="○" android:textColor="#66788A" android:textSize="16sp" />
+    </LinearLayout>
 
-    <TextView
+    <LinearLayout
         android:id="@+id/alertRow2"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:layout_marginTop="4dp"
         android:gravity="center_vertical"
-        android:maxLines="1"
-        android:textColor="#E1E7EF"
-        android:textSize="15sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
+        android:paddingHorizontal="10dp"
+        android:orientation="horizontal"
+        android:background="@drawable/alert_row_background"
+        android:visibility="gone">
+        <TextView android:id="@+id/alertSymbol2" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertCondition2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginHorizontal="8dp" android:maxLines="1" android:textColor="#8EA0B2" android:textSize="12sp" />
+        <TextView android:id="@+id/alertPrice2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertState2" android:layout_width="24dp" android:layout_height="wrap_content" android:gravity="end" android:text="○" android:textColor="#66788A" android:textSize="16sp" />
+    </LinearLayout>
 
-    <TextView
+    <LinearLayout
         android:id="@+id/alertRow3"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:layout_marginTop="4dp"
         android:gravity="center_vertical"
-        android:maxLines="1"
-        android:textColor="#E1E7EF"
-        android:textSize="15sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
+        android:paddingHorizontal="10dp"
+        android:orientation="horizontal"
+        android:background="@drawable/alert_row_background"
+        android:visibility="gone">
+        <TextView android:id="@+id/alertSymbol3" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertCondition3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginHorizontal="8dp" android:maxLines="1" android:textColor="#8EA0B2" android:textSize="12sp" />
+        <TextView android:id="@+id/alertPrice3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertState3" android:layout_width="24dp" android:layout_height="wrap_content" android:gravity="end" android:text="○" android:textColor="#66788A" android:textSize="16sp" />
+    </LinearLayout>
 
-    <TextView
+    <LinearLayout
         android:id="@+id/alertRow4"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:layout_marginTop="4dp"
         android:gravity="center_vertical"
-        android:maxLines="1"
-        android:textColor="#E1E7EF"
-        android:textSize="15sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
+        android:paddingHorizontal="10dp"
+        android:orientation="horizontal"
+        android:background="@drawable/alert_row_background"
+        android:visibility="gone">
+        <TextView android:id="@+id/alertSymbol4" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertCondition4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginHorizontal="8dp" android:maxLines="1" android:textColor="#8EA0B2" android:textSize="12sp" />
+        <TextView android:id="@+id/alertPrice4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:maxLines="1" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
+        <TextView android:id="@+id/alertState4" android:layout_width="24dp" android:layout_height="wrap_content" android:gravity="end" android:text="○" android:textColor="#66788A" android:textSize="16sp" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/alertUpdatedText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
         android:gravity="end"
-        android:text="Touchez pour charger les prix"
-        android:textColor="#7F8C99"
-        android:textSize="10sp" />
+        android:text="Touchez pour actualiser"
+        android:textColor="#728394"
+        android:textSize="9sp" />
 </LinearLayout>
