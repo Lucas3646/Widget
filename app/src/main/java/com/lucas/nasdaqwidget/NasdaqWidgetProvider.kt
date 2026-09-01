@@ -29,11 +29,14 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
         scheduleRefresh(context)
     }
 
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        appWidgetIds.forEach { WidgetAssetConfig.remove(context, it) }
+        super.onDeleted(context, appWidgetIds)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
-        if (intent.action == ACTION_REFRESH) {
-            requestImmediateRefresh(context)
-        }
+        if (intent.action == ACTION_REFRESH) requestImmediateRefresh(context)
     }
 
     companion object {
@@ -45,9 +48,17 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
             manager.getAppWidgetIds(component).forEach { updateWidget(context, manager, it) }
         }
 
+        fun updateOne(context: Context, manager: AppWidgetManager, id: Int) {
+            updateWidget(context, manager, id)
+        }
+
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
-            val data = MarketRepository.cached(context)
+            val symbol = WidgetAssetConfig.symbol(context, id)
+            val name = WidgetAssetConfig.name(context, id)
+            val data = MarketRepository.cached(context, symbol)
             val views = RemoteViews(context.packageName, R.layout.widget_nasdaq)
+            views.setTextViewText(R.id.assetTitleText, name)
+            views.setTextViewText(R.id.assetSymbolText, symbol)
 
             if (data == null) {
                 views.setTextViewText(R.id.priceText, "--")
@@ -55,19 +66,13 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.changePointsText, "")
                 views.setTextViewText(R.id.updatedText, "TOUCHER ↻")
             } else {
-                val symbols = DecimalFormatSymbols(Locale.FRANCE)
-                symbols.groupingSeparator = ' '
+                val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
                 val priceFormat = DecimalFormat("#,##0.00", symbols)
                 val signed = DecimalFormat("+0.00;-0.00", symbols)
-
                 views.setTextViewText(R.id.priceText, priceFormat.format(data.price))
                 views.setTextViewText(R.id.changePercentText, "${signed.format(data.changePercent)}%")
                 views.setTextViewText(R.id.changePointsText, signed.format(data.change))
-                views.setTextViewText(
-                    R.id.updatedText,
-                    "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(data.updatedAtMillis))}  ●"
-                )
-
+                views.setTextViewText(R.id.updatedText, "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(data.updatedAtMillis))}  ●")
                 val trendColor = if (data.change >= 0) Color.rgb(56, 242, 122) else Color.rgb(255, 82, 82)
                 views.setTextColor(R.id.changePercentText, trendColor)
                 views.setTextColor(R.id.changePointsText, trendColor)
@@ -84,28 +89,16 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
         }
 
         fun requestImmediateRefresh(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-            val request = OneTimeWorkRequestBuilder<WidgetRefreshWorker>()
-                .setConstraints(constraints)
-                .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "nasdaq_widget_refresh_now",
-                ExistingWorkPolicy.REPLACE,
-                request
-            )
+            val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            val request = OneTimeWorkRequestBuilder<WidgetRefreshWorker>().setConstraints(constraints).build()
+            WorkManager.getInstance(context).enqueueUniqueWork("market_widget_refresh_now", ExistingWorkPolicy.REPLACE, request)
         }
 
         fun scheduleRefresh(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-            val request = PeriodicWorkRequestBuilder<WidgetRefreshWorker>(15, TimeUnit.MINUTES)
-                .setConstraints(constraints)
-                .build()
+            val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            val request = PeriodicWorkRequestBuilder<WidgetRefreshWorker>(15, TimeUnit.MINUTES).setConstraints(constraints).build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                "nasdaq_widget_refresh",
+                "market_widget_refresh",
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request
             )
