@@ -11,9 +11,6 @@ class AlertRefreshWorker(
     override fun doWork(): Result {
         return runCatching {
             AlertMarketRepository.refresh(applicationContext)
-            if (AlertStore.rules(applicationContext).any { it.isMvrv() }) {
-                runCatching { MvrvRepository.refresh(applicationContext) }
-            }
             AlertWidgetProvider.updateAll(applicationContext)
         }.fold(
             onSuccess = { Result.success() },
