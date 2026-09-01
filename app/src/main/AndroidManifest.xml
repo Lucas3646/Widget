@@ -4,7 +4,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="NASDAQ Widget"
+        android:label="@string/app_name"
         android:theme="@style/Theme.NasdaqWidget">
 
         <activity
@@ -26,6 +26,18 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/nasdaq_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".AlertWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.lucas.nasdaqwidget.REFRESH_ALERTS" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/alert_widget_info" />
         </receiver>
     </application>
 </manifest>
