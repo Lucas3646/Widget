@@ -32,6 +32,9 @@ class AlertWidgetProvider : AppWidgetProvider() {
         if (intent.action == ACTION_REFRESH_ALERTS) {
             Thread {
                 AlertMarketRepository.refresh(context)
+                if (AlertStore.rules(context).any { it.symbol == "BTC-USD" }) {
+                    runCatching { MvrvRepository.refresh(context) }
+                }
                 updateAll(context)
             }.start()
         }
@@ -54,6 +57,7 @@ class AlertWidgetProvider : AppWidgetProvider() {
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_alerts)
             val allRules = AlertStore.rules(context)
+            val hasBtc = allRules.any { it.symbol == "BTC-USD" }
             val decorated = allRules.map { rule ->
                 val price = AlertMarketRepository.cachedPrice(context, rule.symbol)
                 Triple(rule, price, price?.let(rule::isTriggered) == true)
@@ -61,13 +65,16 @@ class AlertWidgetProvider : AppWidgetProvider() {
             val shown = decorated.sortedWith(
                 compareByDescending<Triple<AlertRule, Double?, Boolean>> { it.third }
                     .thenBy { it.first.id }
-            ).take(4)
+            ).take(if (hasBtc) 3 else 4)
 
             val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
             val priceFormat = DecimalFormat("#,##0.##", symbols)
+            val compactPriceFormat = DecimalFormat("#,##0", symbols)
+            val oneDecimal = DecimalFormat("0.0", symbols)
             val triggeredCount = decorated.count { it.third }
 
             rowIds.forEach { views.setViewVisibility(it, View.GONE) }
+            views.setViewVisibility(R.id.mvrvStrip, if (hasBtc) View.VISIBLE else View.GONE)
             views.setTextViewText(
                 R.id.alertSummaryText,
                 when {
@@ -106,6 +113,40 @@ class AlertWidgetProvider : AppWidgetProvider() {
                         if (triggered) R.drawable.alert_row_triggered_background else R.drawable.alert_row_background
                     )
                     views.setViewVisibility(rowIds[index], View.VISIBLE)
+                }
+            }
+
+            if (hasBtc) {
+                val snapshot = MvrvRepository.cached(context)
+                val liveBtc = AlertMarketRepository.cachedPrice(context, "BTC-USD")
+                if (snapshot == null) {
+                    views.setTextViewText(R.id.mvrvValueText, "MVRV Z --")
+                    views.setTextViewText(R.id.mvrvZoneText, "Toucher pour charger")
+                    views.setTextColor(R.id.mvrvValueText, Color.rgb(142, 160, 178))
+                    views.setTextColor(R.id.mvrvZoneText, Color.rgb(114, 131, 148))
+                } else {
+                    val zoneLabel = MvrvRepository.zoneLabel(snapshot.zScore)
+                    val zonePrice = snapshot.estimatedHighZonePrice
+                    val distancePct = if (zonePrice != null && liveBtc != null && liveBtc > 0.0) {
+                        (zonePrice / liveBtc - 1.0) * 100.0
+                    } else null
+                    val zoneColor = when {
+                        snapshot.zScore >= MvrvRepository.highZoneZ() -> Color.rgb(255, 82, 82)
+                        snapshot.zScore >= 5.0 -> Color.rgb(255, 188, 66)
+                        else -> Color.rgb(80, 191, 255)
+                    }
+                    views.setTextViewText(R.id.mvrvValueText, "MVRV Z ${oneDecimal.format(snapshot.zScore)} · $zoneLabel")
+                    views.setTextColor(R.id.mvrvValueText, zoneColor)
+
+                    val detail = when {
+                        zonePrice != null && distancePct != null && distancePct > 0.0 ->
+                            "Zone Z7 ≈ $${compactPriceFormat.format(zonePrice)} · +${oneDecimal.format(distancePct)}%"
+                        zonePrice != null && distancePct != null ->
+                            "Zone Z7 ≈ $${compactPriceFormat.format(zonePrice)} · atteinte"
+                        else -> "Zone haute Z7 · estimation indisponible"
+                    }
+                    views.setTextViewText(R.id.mvrvZoneText, detail)
+                    views.setTextColor(R.id.mvrvZoneText, Color.rgb(205, 216, 228))
                 }
             }
 
