@@ -65,7 +65,7 @@ class DividendWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.dividendDate, if (BrokerConnectionStore.hasIbkrSetup(context)) "Aucune échéance trouvée" else "Touchez pour configurer")
                 views.setTextViewText(R.id.dividendReceivedYtd, "— €")
                 views.setTextViewText(R.id.dividendRemaining, "— €")
-                views.setTextViewText(R.id.dividendDescription, "La Flex Query doit inclure Open Dividend Accruals + Cash Transactions.")
+                views.setTextViewText(R.id.dividendDescription, "Historique IBKR requis pour calculer les prochaines échéances.")
                 return views
             }
 
@@ -77,12 +77,23 @@ class DividendWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.dividendSymbol, snapshot.symbol)
             views.setTextViewText(R.id.dividendCountdown, if (snapshot.hasUpcoming) "J-${snapshot.daysUntil.coerceAtLeast(0)}" else "—")
             views.setTextViewText(R.id.dividendAmount, nextFormatter.format(snapshot.nextAmount))
-            views.setTextViewText(R.id.dividendDate, if (snapshot.hasUpcoming) "Prévu le ${snapshot.nextDateLabel}" else "Dernier reçu · ${snapshot.nextDateLabel}")
+            views.setTextViewText(
+                R.id.dividendDate,
+                when {
+                    snapshot.hasUpcoming && snapshot.estimatedUpcoming -> "Estimé le ${snapshot.nextDateLabel}"
+                    snapshot.hasUpcoming -> "Prévu le ${snapshot.nextDateLabel}"
+                    else -> "Dernier reçu · ${snapshot.nextDateLabel}"
+                }
+            )
             views.setTextViewText(R.id.dividendReceivedYtd, eur.format(snapshot.receivedYtdEur))
             views.setTextViewText(R.id.dividendRemaining, eur.format(snapshot.remainingYearEur))
             views.setTextViewText(
                 R.id.dividendDescription,
-                if (snapshot.hasUpcoming) "Restant = dividendes déjà déclarés par IBKR jusqu’au 31/12" else "Aucun prochain dividende déclaré dans la Flex Query"
+                when {
+                    snapshot.hasUpcoming && snapshot.estimatedUpcoming -> "Échéances estimées depuis l’historique réel des paiements IBKR"
+                    snapshot.hasUpcoming -> "Restant = dividendes déclarés par IBKR jusqu’au 31/12"
+                    else -> "Pas assez d’historique pour estimer le prochain paiement"
+                }
             )
             return views
         }
