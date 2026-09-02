@@ -2,6 +2,7 @@ package com.lucas.nasdaqwidget
 
 import android.content.Context
 import android.util.Base64
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -12,15 +13,28 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 
+data class KrakenPositionSnapshot(
+    val symbol: String,
+    val valueEur: Double,
+    val dayChangeEur: Double,
+    val dayChangePercent: Double
+)
+
 data class KrakenPortfolioSnapshot(
     val totalEur: Double,
+    val dayChangeEur: Double,
+    val dayChangePercent: Double,
     val balances: Map<String, Double>,
+    val positions: List<KrakenPositionSnapshot>,
     val updatedAt: Long
 )
+
+private data class TickerSnapshot(val current: Double, val open: Double)
 
 object KrakenPortfolioRepository {
     private const val PREFS = "kraken_portfolio_cache"
     private const val BASE = "https://api.kraken.com"
+    private val cashLikeAssets = setOf("EUR", "USD", "GBP", "CHF", "CAD", "AUD", "JPY", "USDT", "USDC")
 
     fun refresh(context: Context): KrakenPortfolioSnapshot {
         val credentials = BrokerConnectionStore.krakenCredentials(context)
@@ -28,10 +42,43 @@ object KrakenPortfolioRepository {
 
         val balances = fetchBalances(credentials)
             .filterValues { kotlin.math.abs(it) > 0.00000001 }
-        val total = balances.entries.sumOf { (asset, amount) ->
-            amount * eurPrice(asset)
+
+        var total = 0.0
+        var totalDayChange = 0.0
+        val positions = mutableListOf<KrakenPositionSnapshot>()
+
+        balances.forEach { (rawAsset, amount) ->
+            val symbol = normalizeAsset(rawAsset)
+            val ticker = eurTicker(rawAsset)
+            val current = ticker?.current ?: 0.0
+            val open = ticker?.open ?: current
+            val value = amount * current
+            val dayChange = amount * (current - open)
+            val dayPercent = if (open > 0) (current / open - 1.0) * 100.0 else 0.0
+
+            total += value
+            totalDayChange += dayChange
+
+            if (symbol !in cashLikeAssets && current > 0 && value > 0.01) {
+                positions += KrakenPositionSnapshot(
+                    symbol = if (symbol == "XBT") "BTC" else symbol,
+                    valueEur = value,
+                    dayChangeEur = dayChange,
+                    dayChangePercent = dayPercent
+                )
+            }
         }
-        val snapshot = KrakenPortfolioSnapshot(total, balances, System.currentTimeMillis())
+
+        val previous = total - totalDayChange
+        val totalDayPercent = if (previous > 0) totalDayChange / previous * 100.0 else 0.0
+        val snapshot = KrakenPortfolioSnapshot(
+            totalEur = total,
+            dayChangeEur = totalDayChange,
+            dayChangePercent = totalDayPercent,
+            balances = balances,
+            positions = positions,
+            updatedAt = System.currentTimeMillis()
+        )
         cache(context, snapshot)
         BrokerConnectionStore.setKrakenVerified(context, true)
         return snapshot
@@ -43,9 +90,29 @@ object KrakenPortfolioRepository {
         val objectJson = runCatching { JSONObject(raw) }.getOrNull() ?: return null
         val balances = mutableMapOf<String, Double>()
         objectJson.keys().forEach { key -> balances[key] = objectJson.optDouble(key, 0.0) }
+
+        val positions = mutableListOf<KrakenPositionSnapshot>()
+        val positionRaw = prefs.getString("positions", null)
+        if (positionRaw != null) {
+            runCatching { JSONArray(positionRaw) }.getOrNull()?.let { array ->
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    positions += KrakenPositionSnapshot(
+                        symbol = item.optString("symbol"),
+                        valueEur = item.optDouble("valueEur", 0.0),
+                        dayChangeEur = item.optDouble("dayChangeEur", 0.0),
+                        dayChangePercent = item.optDouble("dayChangePercent", 0.0)
+                    )
+                }
+            }
+        }
+
         return KrakenPortfolioSnapshot(
             totalEur = java.lang.Double.longBitsToDouble(prefs.getLong("total", 0L)),
+            dayChangeEur = java.lang.Double.longBitsToDouble(prefs.getLong("dayChange", 0L)),
+            dayChangePercent = java.lang.Double.longBitsToDouble(prefs.getLong("dayPercent", 0L)),
             balances = balances,
+            positions = positions,
             updatedAt = prefs.getLong("updated", 0L)
         )
     }
@@ -55,11 +122,23 @@ object KrakenPortfolioRepository {
     }
 
     private fun cache(context: Context, snapshot: KrakenPortfolioSnapshot) {
-        val json = JSONObject()
-        snapshot.balances.forEach { (asset, amount) -> json.put(asset, amount) }
+        val balancesJson = JSONObject()
+        snapshot.balances.forEach { (asset, amount) -> balancesJson.put(asset, amount) }
+        val positionsJson = JSONArray()
+        snapshot.positions.forEach { position ->
+            positionsJson.put(JSONObject().apply {
+                put("symbol", position.symbol)
+                put("valueEur", position.valueEur)
+                put("dayChangeEur", position.dayChangeEur)
+                put("dayChangePercent", position.dayChangePercent)
+            })
+        }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putLong("total", java.lang.Double.doubleToRawLongBits(snapshot.totalEur))
-            .putString("balances", json.toString())
+            .putLong("dayChange", java.lang.Double.doubleToRawLongBits(snapshot.dayChangeEur))
+            .putLong("dayPercent", java.lang.Double.doubleToRawLongBits(snapshot.dayChangePercent))
+            .putString("balances", balancesJson.toString())
+            .putString("positions", positionsJson.toString())
             .putLong("updated", snapshot.updatedAt)
             .apply()
     }
@@ -106,26 +185,25 @@ object KrakenPortfolioRepository {
         return Base64.encodeToString(mac.doFinal(message), Base64.NO_WRAP)
     }
 
-    private fun eurPrice(rawAsset: String): Double {
+    private fun eurTicker(rawAsset: String): TickerSnapshot? {
         val asset = normalizeAsset(rawAsset)
-        if (asset == "EUR") return 1.0
+        if (asset == "EUR") return TickerSnapshot(1.0, 1.0)
         val candidates = when (asset) {
-            "XBT" -> listOf("XBTEUR", "XXBTZEUR")
-            "USD" -> listOf("EURUSD")
-            "USDT" -> listOf("USDTEUR")
-            "USDC" -> listOf("USDCEUR")
-            else -> listOf("${asset}EUR")
+            "XBT" -> listOf("XBTEUR" to false, "XXBTZEUR" to false)
+            "USD" -> listOf("EURUSD" to true)
+            "USDT" -> listOf("USDTEUR" to false)
+            "USDC" -> listOf("USDCEUR" to false)
+            else -> listOf("${asset}EUR" to false)
         }
-        for (pair in candidates) {
-            val price = fetchTicker(pair)
-            if (price != null && price > 0) {
-                return if (asset == "USD" && pair == "EURUSD") 1.0 / price else price
-            }
+        for ((pair, inverse) in candidates) {
+            val ticker = fetchTicker(pair) ?: continue
+            if (ticker.current <= 0 || ticker.open <= 0) continue
+            return if (inverse) TickerSnapshot(1.0 / ticker.current, 1.0 / ticker.open) else ticker
         }
-        return 0.0
+        return null
     }
 
-    private fun fetchTicker(pair: String): Double? {
+    private fun fetchTicker(pair: String): TickerSnapshot? {
         return runCatching {
             val encoded = URLEncoder.encode(pair, "UTF-8")
             val connection = (URL("$BASE/0/public/Ticker?pair=$encoded").openConnection() as HttpURLConnection).apply {
@@ -138,7 +216,10 @@ object KrakenPortfolioRepository {
             val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
             val result = json.optJSONObject("result") ?: return@runCatching null
             val firstKey = result.keys().asSequence().firstOrNull() ?: return@runCatching null
-            result.optJSONObject(firstKey)?.optJSONArray("c")?.optString(0)?.toDoubleOrNull()
+            val ticker = result.optJSONObject(firstKey) ?: return@runCatching null
+            val current = ticker.optJSONArray("c")?.optString(0)?.toDoubleOrNull() ?: return@runCatching null
+            val open = ticker.optString("o").toDoubleOrNull() ?: current
+            TickerSnapshot(current, open)
         }.getOrNull()
     }
 
