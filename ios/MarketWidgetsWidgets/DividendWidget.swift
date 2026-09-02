@@ -18,7 +18,8 @@ struct DividendWidgetProvider: TimelineProvider {
                 daysUntil: 3,
                 receivedYTDEUR: 84.20,
                 remainingYearEUR: 41.60,
-                isUpcoming: true
+                isUpcoming: true,
+                estimatedUpcoming: true
             )
         )
     }
@@ -51,7 +52,11 @@ struct DividendWidgetView: View {
                 }
                 Text(dividend.amount.formatted(.currency(code: dividend.currency)))
                     .font(.headline.weight(.bold)).foregroundStyle(.white)
-                Text(dividend.isUpcoming ? "Prévu le \(dividend.date.formatted(.dateTime.day().month(.abbreviated)))" : "Dernier reçu · \(dividend.date.formatted(.dateTime.day().month(.abbreviated)))")
+                Text(
+                    dividend.isUpcoming
+                        ? "\(dividend.estimatedUpcoming ? "Estimé" : "Prévu") le \(dividend.date.formatted(.dateTime.day().month(.abbreviated)))"
+                        : "Dernier reçu · \(dividend.date.formatted(.dateTime.day().month(.abbreviated)))"
+                )
                     .font(.caption).foregroundStyle(muted)
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 1) {
@@ -63,11 +68,11 @@ struct DividendWidgetView: View {
                         Text(dividend.remainingYearEUR.formatted(.currency(code: "EUR"))).font(.caption.weight(.bold)).foregroundStyle(.white)
                     }
                 }
-                Text("Restant = dividendes déjà déclarés par IBKR")
+                Text(dividend.estimatedUpcoming ? "Échéances estimées depuis l’historique IBKR" : "Restant = dividendes déclarés par IBKR")
                     .font(.system(size: 8)).foregroundStyle(muted)
             } else {
                 Text("Aucune donnée dividende").font(.headline).foregroundStyle(.white)
-                Text("La Flex Query doit inclure Open Dividend Accruals + Cash Transactions")
+                Text("Historique IBKR requis pour calculer les prochaines échéances")
                     .font(.caption).foregroundStyle(muted)
             }
         }
@@ -80,7 +85,7 @@ struct DividendWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: DividendWidgetProvider()) { DividendWidgetView(entry: $0) }
             .configurationDisplayName("Dividendes · IBKR")
-            .description("Prochain dividende, J-x, reçu YTD et restant déclaré jusqu’au 31/12.")
+            .description("Prochain dividende, J-x, reçu YTD et restant jusqu’au 31/12.")
             .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
