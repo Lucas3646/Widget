@@ -15,55 +15,97 @@ data class MvrvSnapshot(
 object MvrvRepository {
     private const val PREFS = "btc_mvrv_snapshot"
     private const val HIGH_ZONE_Z = 7.0
-    private const val ENDPOINT =
-        "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics" +
-            "?assets=btc" +
-            "&metrics=CapMVRVZ,CapMrktCurUSD,CapRealUSD,SplyCur,PriceUSD" +
-            "&frequency=1d&limit_per_asset=1&paging_from=end"
+    private const val BASE_ENDPOINT =
+        "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
 
     fun refresh(context: Context): MvrvSnapshot {
-        val connection = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
+        // Fetch the essential metric alone first. This avoids one optional metric
+        // making the entire Community API request fail with a 403/unsupported error.
+        val zItem = fetchLatest("CapMVRVZ")
+        val zScore = zItem.optString("CapMVRVZ").toDoubleOrNull()
+            ?: throw IllegalStateException("Missing CapMVRVZ")
+
+        // Complementary values are best-effort only. The widget must still work
+        // even if one of them is unavailable on the Community plan.
+        val details = runCatching {
+            fetchLatest(
+                "CapMrktCurUSD,CapRealUSD,SplyCur,PriceUSD",
+                ignoreForbidden = true,
+                ignoreUnsupported = true
+            )
+        }.getOrNull()
+
+        val marketCap = details?.optString("CapMrktCurUSD")?.toDoubleOrNull()
+        val realizedCap = details?.optString("CapRealUSD")?.toDoubleOrNull()
+        val supply = details?.optString("SplyCur")?.toDoubleOrNull()
+        val sourcePrice = details?.optString("PriceUSD")?.toDoubleOrNull()
+
+        val estimatedHighZonePrice = if (
+            marketCap != null &&
+            realizedCap != null &&
+            supply != null &&
+            supply > 0.0 &&
+            kotlin.math.abs(zScore) > 0.000001
+        ) {
+            val marketCapStdDev = (marketCap - realizedCap) / zScore
+            val targetMarketCap = realizedCap + HIGH_ZONE_Z * marketCapStdDev
+            if (targetMarketCap > 0.0) targetMarketCap / supply else null
+        } else {
+            null
+        }
+
+        val snapshot = MvrvSnapshot(
+            zScore = zScore,
+            estimatedHighZonePrice = estimatedHighZonePrice,
+            sourcePrice = sourcePrice,
+            updatedAtMillis = System.currentTimeMillis()
+        )
+        save(context, snapshot)
+        return snapshot
+    }
+
+    private fun fetchLatest(
+        metrics: String,
+        ignoreForbidden: Boolean = false,
+        ignoreUnsupported: Boolean = false
+    ): JSONObject {
+        val endpoint = buildString {
+            append(BASE_ENDPOINT)
+            append("?assets=btc")
+            append("&metrics=")
+            append(metrics)
+            append("&frequency=1d")
+            append("&limit_per_asset=1")
+            append("&paging_from=end")
+            if (ignoreForbidden) append("&ignore_forbidden_errors=true")
+            if (ignoreUnsupported) append("&ignore_unsupported_errors=true")
+        }
+
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 10_000
+            connectTimeout = 12_000
+            readTimeout = 12_000
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "MarketWidgets/1.0 Android")
         }
 
         try {
-            if (connection.responseCode !in 200..299) {
-                throw IllegalStateException("Coin Metrics HTTP ${connection.responseCode}")
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                val error = runCatching {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                }.getOrNull().orEmpty()
+                throw IllegalStateException(
+                    "Coin Metrics HTTP $code${if (error.isNotBlank()) ": ${error.take(180)}" else ""}"
+                )
             }
 
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             val root = JSONObject(body)
-            val data = root.getJSONArray("data")
+            val data = root.optJSONArray("data")
+                ?: throw IllegalStateException("Missing Coin Metrics data")
             if (data.length() == 0) throw IllegalStateException("No MVRV data")
-            val item = data.getJSONObject(data.length() - 1)
-
-            val zScore = item.optString("CapMVRVZ").toDoubleOrNull()
-                ?: throw IllegalStateException("Missing CapMVRVZ")
-            val marketCap = item.optString("CapMrktCurUSD").toDoubleOrNull()
-            val realizedCap = item.optString("CapRealUSD").toDoubleOrNull()
-            val supply = item.optString("SplyCur").toDoubleOrNull()
-            val sourcePrice = item.optString("PriceUSD").toDoubleOrNull()
-
-            val estimatedHighZonePrice = if (
-                marketCap != null && realizedCap != null && supply != null && supply > 0.0 && kotlin.math.abs(zScore) > 0.000001
-            ) {
-                val marketCapStdDev = (marketCap - realizedCap) / zScore
-                val targetMarketCap = realizedCap + HIGH_ZONE_Z * marketCapStdDev
-                if (targetMarketCap > 0.0) targetMarketCap / supply else null
-            } else null
-
-            val snapshot = MvrvSnapshot(
-                zScore = zScore,
-                estimatedHighZonePrice = estimatedHighZonePrice,
-                sourcePrice = sourcePrice,
-                updatedAtMillis = System.currentTimeMillis()
-            )
-            save(context, snapshot)
-            return snapshot
+            return data.getJSONObject(data.length() - 1)
         } finally {
             connection.disconnect()
         }
