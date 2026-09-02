@@ -84,15 +84,12 @@ object KrakenPortfolioRepository {
             val asset=baseAsset(pair)
             val vol=t.optString("vol").toDoubleOrNull()?:return@forEach
             val cost=t.optString("cost").toDoubleOrNull()?:return@forEach
-            val fee=t.optString("fee").toDoubleOrNull()?:0.0
             val quote=quoteAsset(pair)
             val timestamp=t.optDouble("time").toLong()
             val quoteUsd=quoteToUsdAt(quote,timestamp,eurUsdHistory)
             val s=states.getOrPut(asset){CostState()}
             if(type=="buy"){
                 s.qty+=vol
-                // Kraken Pro's displayed average price/cost basis is based on trade cost;
-                // fees are reported separately and are therefore not folded into entry price.
                 s.costUsd+=cost*quoteUsd
             }else if(type=="sell"&&s.qty>0){
                 val sold=vol.coerceAtMost(s.qty)
@@ -114,12 +111,12 @@ object KrakenPortfolioRepository {
         else->1.0
     }
 
-    private fun dailyFxHistory(pair:String,since:Long):Map<Long,Double>=runCatching{
+    private fun dailyFxHistory(pair:String,since:Long): Map<Long,Double> = runCatching {
         val u="$BASE/0/public/OHLC?pair=${URLEncoder.encode(pair,"UTF-8")}&interval=1440&since=$since"
         val con=URL(u).openConnection() as HttpURLConnection
         con.connectTimeout=10000;con.readTimeout=10000
         val root=JSONObject(con.inputStream.bufferedReader().use{it.readText()}).getJSONObject("result")
-        val key=root.keys().asSequence().firstOrNull{it!="last"}?:return@runCatching emptyMap()
+        val key=root.keys().asSequence().firstOrNull{it!="last"}?:return@runCatching emptyMap<Long,Double>()
         val rows=root.getJSONArray(key)
         buildMap<Long,Double>{
             for(i in 0 until rows.length()){
