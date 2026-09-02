@@ -45,10 +45,22 @@ enum IBKRFlexService {
         let parser=IBKRFlexParser();let xp=XMLParser(data:Data(statement.utf8));xp.delegate=parser;guard xp.parse() else{throw URLError(.cannotParseResponse)}
         var total=0.0
         for (_,v) in parser.latestTotals { total += v.total * (await fxToEUR(v.currency)) }
-        var change=0.0;var rows:[IBKRPositionSnapshot]=[]
-        for p in parser.positions { let quote=try? await yahooQuote(symbol:p.symbol,currency:p.currency,period:period);let fx=await fxToEUR(p.currency);let current=quote?.current ?? p.markPrice;let ref=quote?.reference ?? p.markPrice;let live=p.quantity*current*fx;total += live-p.quantity*p.markPrice*fx;let ch=p.quantity*(current-ref)*fx;change += ch;let pct=ref != 0 ? (current/ref-1)*100:0;rows.append(.init(symbol:p.symbol,valueEUR:live,periodChangeEUR:ch,periodChangePercent:pct)) }
-        let previous=total-change
-        return .init(totalEUR:total,periodChangeEUR:change,periodChangePercent:previous>0 ? change/previous*100:0,positions:rows,updatedAt:Date())
+        var change=0.0;var investedBase=0.0;var rows:[IBKRPositionSnapshot]=[]
+        for p in parser.positions {
+            let quote=try? await yahooQuote(symbol:p.symbol,currency:p.currency,period:period)
+            let fx=await fxToEUR(p.currency)
+            let current=quote?.current ?? p.markPrice
+            let ref=quote?.reference ?? p.markPrice
+            let live=p.quantity*current*fx
+            total += live-p.quantity*p.markPrice*fx
+            let baseValue=p.quantity*ref*fx
+            let ch=live-baseValue
+            change += ch
+            if baseValue.isFinite && baseValue > 0 { investedBase += baseValue }
+            let pct=ref != 0 ? (current/ref-1)*100:0
+            rows.append(.init(symbol:p.symbol,valueEUR:live,periodChangeEUR:ch,periodChangePercent:pct))
+        }
+        return .init(totalEUR:total,periodChangeEUR:change,periodChangePercent:investedBase>0 ? change/investedBase*100:0,positions:rows,updatedAt:Date())
     }
     private static func fetchStatement(token:String,queryID:String) async throws -> String { let encToken=token.addingPercentEncoding(withAllowedCharacters:.urlQueryAllowed)!;let encQuery=queryID.addingPercentEncoding(withAllowedCharacters:.urlQueryAllowed)!;let send=try await get("\(base)/SendRequest?t=\(encToken)&q=\(encQuery)&v=3");guard let ref=tag(send,"ReferenceCode") else{throw NSError(domain:"IBKR",code:2,userInfo:[NSLocalizedDescriptionKey:tag(send,"ErrorMessage") ?? "ReferenceCode absent"])};for _ in 0..<6 { let body=try await get("\(base)/GetStatement?t=\(encToken)&q=\(ref)&v=3");if body.contains("<FlexQueryResponse"){return body};try await Task.sleep(nanoseconds:1_000_000_000) };throw NSError(domain:"IBKR",code:3,userInfo:[NSLocalizedDescriptionKey:"Rapport IBKR indisponible"]) }
     private static func get(_ url:String) async throws -> String { var r=URLRequest(url:URL(string:url)!);r.setValue("MarketWidgets/1.4 iOS",forHTTPHeaderField:"User-Agent");let(d,res)=try await URLSession.shared.data(for:r);guard let h=res as? HTTPURLResponse,h.statusCode<300 else{throw URLError(.badServerResponse)};return String(decoding:d,as:UTF8.self) }
