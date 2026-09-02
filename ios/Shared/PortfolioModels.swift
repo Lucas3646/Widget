@@ -22,10 +22,23 @@ struct PortfolioSnapshot: Codable, Hashable {
     let chartValues: [Double]
     let updatedAt: Date
     var totalEUR: Double { accounts.reduce(0) { $0 + $1.valueEUR } }
-    var dayChangeEUR: Double { accounts.reduce(0) { $0 + $1.dayChangeEUR } }
+
+    private var assetPerformance: (change: Double, base: Double) {
+        positions.reduce(into: (change: 0.0, base: 0.0)) { result, position in
+            let factor = 1.0 + position.dayChangePercent / 100.0
+            guard factor > 0.000001 else { return }
+            let base = position.valueEUR / factor
+            guard base.isFinite, base > 0 else { return }
+            result.base += base
+            result.change += position.valueEUR - base
+        }
+    }
+
+    // Cash stays in totalEUR, but deposits/withdrawals and idle cash do not count as performance.
+    var dayChangeEUR: Double { assetPerformance.change }
     var dayChangePercent: Double {
-        let previous = totalEUR - dayChangeEUR
-        return previous == 0 ? 0 : dayChangeEUR / previous * 100
+        let p = assetPerformance
+        return p.base > 0 ? p.change / p.base * 100 : 0
     }
     var rankedPositions: [PortfolioPositionSnapshot] { positions }
     var top3: [PortfolioPositionSnapshot] { Array(rankedPositions.filter { $0.dayChangePercent > 0.0001 }.sorted { $0.dayChangePercent > $1.dayChangePercent }.prefix(3)) }
