@@ -44,6 +44,7 @@ object IbkrFlexRepository {
         if (parsed.positions.isEmpty()) error("Aucune position dans la Flex Query")
 
         var positionsTotal = 0.0
+        var investedBase = 0.0
         var change = 0.0
         val live = mutableListOf<IbkrPositionSnapshot>()
         parsed.positions.forEach { p ->
@@ -54,20 +55,21 @@ object IbkrFlexRepository {
             val baseValue = if (p.positionValue != 0.0) p.positionValue * fx else p.quantity * p.markPrice * fx
             val currentValue = if (quote != null && p.markPrice > 0) baseValue * (current / p.markPrice) else baseValue
             positionsTotal += currentValue
-            val delta = if (reference != 0.0) currentValue * (current / reference - 1.0) else 0.0
+            val referenceValue = if (reference != 0.0) currentValue * (reference / current.coerceAtLeast(1e-12)) else currentValue
+            val delta = currentValue - referenceValue
             change += delta
+            if (referenceValue.isFinite() && referenceValue > 0) investedBase += referenceValue
             val percent = if (reference != 0.0) (current / reference - 1.0) * 100 else 0.0
             if (kotlin.math.abs(currentValue) > 0.01) live += IbkrPositionSnapshot(p.symbol, currentValue, delta, percent)
         }
 
         val cash = parsed.cash.sumOf { it.amount * fxToEur(it.currency) }
         val total = positionsTotal + cash
-        val previous = total - change
         val chart = buildNavChart(parsed.nav, timeframe, total)
         val snapshot = IbkrPortfolioSnapshot(
             totalEur = total,
             periodChangeEur = change,
-            periodChangePercent = if (previous != 0.0) change / previous * 100 else 0.0,
+            periodChangePercent = if (investedBase > 0.0) change / investedBase * 100 else 0.0,
             positions = live,
             chartValues = chart,
             updatedAt = System.currentTimeMillis()
