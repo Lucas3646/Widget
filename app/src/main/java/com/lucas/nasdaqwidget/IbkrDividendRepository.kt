@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 
 data class IbkrDividendSnapshot(
     val symbol: String,
@@ -21,6 +22,7 @@ data class IbkrDividendSnapshot(
     val receivedYtdEur: Double,
     val remainingYearEur: Double,
     val hasUpcoming: Boolean,
+    val estimatedUpcoming: Boolean,
     val updatedAt: Long
 )
 
@@ -43,29 +45,83 @@ object IbkrDividendRepository {
         val today = LocalDate.now()
         val yearStart = today.withDayOfYear(1)
         val yearEnd = today.withMonth(12).withDayOfMonth(31)
-        val upcoming = rows.filter { it.upcoming && !it.date.isBefore(today) && !it.date.isAfter(yearEnd) }.sortedBy { it.date }
-        val received = rows.filter { !it.upcoming && !it.date.isBefore(yearStart) && !it.date.isAfter(today) }
+
+        val received = rows.filter { !it.upcoming && !it.date.isBefore(yearStart.minusYears(1)) && !it.date.isAfter(today) }
+        val receivedYtdRows = received.filter { !it.date.isBefore(yearStart) }
+        val declaredUpcoming = rows.filter { it.upcoming && !it.date.isBefore(today) && !it.date.isAfter(yearEnd) }.sortedBy { it.date }
+
+        // Many IBKR Flex reports leave OpenDividendAccruals empty even when the
+        // security has a recurring dividend. When that happens, infer the next
+        // dates from the user's own IBKR dividend payment history. This is a
+        // fallback estimate, never presented as an IBKR-declared accrual.
+        val inferredUpcoming = if (declaredUpcoming.isEmpty()) inferUpcoming(received, today, yearEnd) else emptyList()
+        val upcoming = if (declaredUpcoming.isNotEmpty()) declaredUpcoming else inferredUpcoming
+        val estimated = declaredUpcoming.isEmpty() && inferredUpcoming.isNotEmpty()
+
         val next = upcoming.firstOrNull()
-        val receivedYtd = received.sumOf { it.amount * fxToEur(it.currency) }
-        val remaining = upcoming.sumOf { it.amount * fxToEur(it.currency) }
-        if (next == null && received.isEmpty()) {
+        val receivedYtd = receivedYtdRows.sumOf { abs(it.amount) * fxToEur(it.currency) }
+        val remaining = upcoming.sumOf { abs(it.amount) * fxToEur(it.currency) }
+
+        if (next == null && receivedYtdRows.isEmpty()) {
             cache(context, null)
             return null
         }
-        val source = next ?: received.maxByOrNull { it.date } ?: return null
+
+        val source = next ?: receivedYtdRows.maxByOrNull { it.date } ?: return null
         val snapshot = IbkrDividendSnapshot(
             symbol = source.symbol.ifBlank { "IBKR" },
-            nextAmount = source.amount,
+            nextAmount = abs(source.amount),
             nextCurrency = source.currency.ifBlank { "EUR" },
             nextDateLabel = source.date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")),
             daysUntil = if (next != null) ChronoUnit.DAYS.between(today, source.date) else 0,
             receivedYtdEur = receivedYtd,
             remainingYearEur = remaining,
             hasUpcoming = next != null,
+            estimatedUpcoming = estimated,
             updatedAt = System.currentTimeMillis()
         )
         cache(context, snapshot)
         return snapshot
+    }
+
+    private fun inferUpcoming(received: List<DividendRow>, today: LocalDate, yearEnd: LocalDate): List<DividendRow> {
+        val result = mutableListOf<DividendRow>()
+        received.groupBy { it.symbol.trim().uppercase() }
+            .filterKeys { it.isNotBlank() }
+            .forEach { (symbol, rawRows) ->
+                // Consolidate multiple IBKR accounts paying the same symbol on the same day.
+                val byDate = rawRows.groupBy { it.date }.map { (date, dayRows) ->
+                    DividendRow(
+                        symbol = symbol,
+                        amount = dayRows.sumOf { abs(it.amount) },
+                        currency = dayRows.firstOrNull()?.currency ?: "EUR",
+                        date = date,
+                        upcoming = false
+                    )
+                }.sortedBy { it.date }
+
+                if (byDate.size < 2) return@forEach
+                val intervals = byDate.zipWithNext { a, b -> ChronoUnit.DAYS.between(a.date, b.date) }
+                    .filter { it in 20..400 }
+                    .takeLast(4)
+                    .sorted()
+                if (intervals.isEmpty()) return@forEach
+
+                val interval = intervals[intervals.size / 2]
+                // Ignore erratic/non-recurring history. Typical monthly,
+                // quarterly, semiannual and annual schedules all fit here.
+                if (interval !in 20..400) return@forEach
+
+                val last = byDate.last()
+                var nextDate = last.date.plusDays(interval)
+                var guard = 0
+                while (nextDate.isBefore(today) && guard++ < 20) nextDate = nextDate.plusDays(interval)
+                while (!nextDate.isAfter(yearEnd) && guard++ < 30) {
+                    result += DividendRow(symbol, last.amount, last.currency, nextDate, true)
+                    nextDate = nextDate.plusDays(interval)
+                }
+            }
+        return result.sortedBy { it.date }
     }
 
     fun cached(context: Context): IbkrDividendSnapshot? {
@@ -80,6 +136,7 @@ object IbkrDividendRepository {
             receivedYtdEur = Double.fromBits(p.getLong("receivedYtd", 0L)),
             remainingYearEur = Double.fromBits(p.getLong("remainingYear", 0L)),
             hasUpcoming = p.getBoolean("hasUpcoming", false),
+            estimatedUpcoming = p.getBoolean("estimatedUpcoming", false),
             updatedAt = p.getLong("updated", 0L)
         )
     }
@@ -99,6 +156,7 @@ object IbkrDividendRepository {
                 .putLong("receivedYtd", snapshot.receivedYtdEur.toBits())
                 .putLong("remainingYear", snapshot.remainingYearEur.toBits())
                 .putBoolean("hasUpcoming", snapshot.hasUpcoming)
+                .putBoolean("estimatedUpcoming", snapshot.estimatedUpcoming)
                 .putLong("updated", snapshot.updatedAt)
         }
         e.apply()
@@ -166,7 +224,7 @@ object IbkrDividendRepository {
             requestMethod = "GET"
             connectTimeout = 12_000
             readTimeout = 20_000
-            setRequestProperty("User-Agent", "MarketWidgets/1.7 Android")
+            setRequestProperty("User-Agent", "MarketWidgets/1.9 Android")
             setRequestProperty("Accept", "application/xml,text/xml,*/*")
         }
         return try {
