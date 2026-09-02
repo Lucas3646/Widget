@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:allowBackup="true" android:icon="@drawable/ic_launcher_market" android:roundIcon="@drawable/ic_launcher_market" android:label="@string/app_name" android:theme="@style/Theme.NasdaqWidget">
         <activity android:name=".BrokerConnectionsActivity" android:exported="false" />
+        <activity android:name=".PortfolioTimeframeActivity" android:exported="false" android:theme="@style/Theme.NasdaqWidget" />
         <activity android:name=".AssetWidgetConfigureActivity" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" /></intent-filter></activity>
         <activity android:name=".DrawdownWidgetConfigureActivity" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" /></intent-filter></activity>
         <activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter></activity>
