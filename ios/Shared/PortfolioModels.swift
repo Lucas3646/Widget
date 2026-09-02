@@ -1,11 +1,7 @@
 import Foundation
 
 struct BrokerAccountSnapshot: Codable, Hashable {
-    enum Broker: String, Codable, Hashable {
-        case ibkr
-        case kraken
-    }
-
+    enum Broker: String, Codable, Hashable { case ibkr, kraken }
     let broker: Broker
     let valueEUR: Double
     let dayChangeEUR: Double
@@ -27,24 +23,29 @@ struct PortfolioSnapshot: Codable, Hashable {
     let updatedAt: Date
 
     var totalEUR: Double { accounts.reduce(0) { $0 + $1.valueEUR } }
-    var dayChangeEUR: Double { accounts.reduce(0) { $0 + $1.dayChangeEUR } }
+
+    // Kraken's Balance permission exposes current quantities, not historical cost basis/trades.
+    // Never present a repriced current balance as portfolio P&L. Only IBKR contributes until
+    // a true Kraken transaction/cost-basis source is available.
+    var dayChangeEUR: Double { accounts.filter { $0.broker == .ibkr }.reduce(0) { $0 + $1.dayChangeEUR } }
     var dayChangePercent: Double {
-        let previous = totalEUR - dayChangeEUR
+        let ibkr = accounts.filter { $0.broker == .ibkr }
+        let current = ibkr.reduce(0) { $0 + $1.valueEUR }
+        let previous = current - dayChangeEUR
         return previous == 0 ? 0 : dayChangeEUR / previous * 100
     }
-    var top3: [PortfolioPositionSnapshot] { Array(positions.sorted { $0.dayChangePercent > $1.dayChangePercent }.prefix(3)) }
-    var flop3: [PortfolioPositionSnapshot] { Array(positions.sorted { $0.dayChangePercent < $1.dayChangePercent }.prefix(3)) }
+    var rankedPositions: [PortfolioPositionSnapshot] { positions.filter { $0.broker == .ibkr } }
+    var top3: [PortfolioPositionSnapshot] { Array(rankedPositions.sorted { $0.dayChangePercent > $1.dayChangePercent }.prefix(3)) }
+    var flop3: [PortfolioPositionSnapshot] { Array(rankedPositions.sorted { $0.dayChangePercent < $1.dayChangePercent }.prefix(3)) }
 
     static let preview = PortfolioSnapshot(
         accounts: [
             BrokerAccountSnapshot(broker: .ibkr, valueEUR: 13_420, dayChangeEUR: 107.36, dayChangePercent: 0.81),
-            BrokerAccountSnapshot(broker: .kraken, valueEUR: 5_222, dayChangeEUR: 106.64, dayChangePercent: 2.08)
+            BrokerAccountSnapshot(broker: .kraken, valueEUR: 5_222, dayChangeEUR: 0, dayChangePercent: 0)
         ],
         positions: [
             PortfolioPositionSnapshot(broker: .ibkr, symbol: "NVDA", valueEUR: 3850, dayChangePercent: 4.21),
-            PortfolioPositionSnapshot(broker: .kraken, symbol: "BTC", valueEUR: 3420, dayChangePercent: 3.46),
             PortfolioPositionSnapshot(broker: .ibkr, symbol: "AAPL", valueEUR: 2710, dayChangePercent: 1.82),
-            PortfolioPositionSnapshot(broker: .kraken, symbol: "ETH", valueEUR: 1802, dayChangePercent: -0.74),
             PortfolioPositionSnapshot(broker: .ibkr, symbol: "AMD", valueEUR: 1260, dayChangePercent: -1.32),
             PortfolioPositionSnapshot(broker: .ibkr, symbol: "TSLA", valueEUR: 1540, dayChangePercent: -2.14)
         ],
@@ -64,13 +65,8 @@ struct DividendSnapshot: Codable, Hashable {
     let hasUpcoming: Bool
 
     static let preview = DividendSnapshot(
-        symbol: "KO",
-        nextAmount: 12.75,
-        nextCurrency: "USD",
-        nextDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date(),
-        daysUntil: 3,
-        receivedYTDEUR: 84.20,
-        remainingYearEUR: 41.60,
-        hasUpcoming: true
+        symbol: "KO", nextAmount: 12.75, nextCurrency: "USD",
+        nextDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date(), daysUntil: 3,
+        receivedYTDEUR: 84.20, remainingYearEUR: 41.60, hasUpcoming: true
     )
 }
