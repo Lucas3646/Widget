@@ -8,8 +8,10 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Shader
 import android.widget.RemoteViews
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -127,24 +129,60 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
             val height = 86
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             if (values.size < 2) return bitmap
+
             val min = values.minOrNull() ?: return bitmap
             val max = values.maxOrNull() ?: return bitmap
             val range = (max - min).takeIf { it > 0.0001 } ?: 1.0
-            val pad = 6f
-            val path = Path()
-            values.forEachIndexed { index, value ->
+            val pad = 7f
+            val points = values.mapIndexed { index, value ->
                 val x = pad + (width - pad * 2) * index.toFloat() / (values.size - 1).coerceAtLeast(1)
                 val y = pad + (height - pad * 2) * (1f - ((value - min) / range).toFloat())
-                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                x to y
             }
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor(if (positive) GREEN else RED)
+
+            val linePath = Path().apply {
+                moveTo(points.first().first, points.first().second)
+                for (i in 1 until points.lastIndex) {
+                    val current = points[i]
+                    val next = points[i + 1]
+                    val midX = (current.first + next.first) / 2f
+                    val midY = (current.second + next.second) / 2f
+                    quadTo(current.first, current.second, midX, midY)
+                }
+                val last = points.last()
+                quadTo(last.first, last.second, last.first, last.second)
+            }
+
+            val accent = Color.parseColor(if (positive) GREEN else RED)
+            val fillPath = Path(linePath).apply {
+                lineTo(points.last().first, height.toFloat())
+                lineTo(points.first().first, height.toFloat())
+                close()
+            }
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                shader = LinearGradient(
+                    0f,
+                    0f,
+                    0f,
+                    height.toFloat(),
+                    Color.argb(105, Color.red(accent), Color.green(accent), Color.blue(accent)),
+                    Color.argb(0, Color.red(accent), Color.green(accent), Color.blue(accent)),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = accent
                 style = Paint.Style.STROKE
                 strokeWidth = 5f
                 strokeCap = Paint.Cap.ROUND
                 strokeJoin = Paint.Join.ROUND
             }
-            Canvas(bitmap).drawPath(path, paint)
+
+            Canvas(bitmap).apply {
+                drawPath(fillPath, fillPaint)
+                drawPath(linePath, strokePaint)
+            }
             return bitmap
         }
 
