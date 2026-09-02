@@ -1,6 +1,8 @@
 package com.lucas.nasdaqwidget
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -8,29 +10,45 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 
 object BrokerConnectionStore {
     private const val PREFS = "broker_connections"
     private const val KEY_ALIAS = "market_widgets_broker_key"
 
+    data class KrakenCredentials(val apiKey: String, val apiSecret: String)
+
     fun saveKraken(context: Context, apiKey: String, apiSecret: String) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.edit()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("kraken_key", encrypt(apiKey.trim()))
             .putString("kraken_secret", encrypt(apiSecret.trim()))
+            .putBoolean("kraken_verified", false)
             .apply()
     }
 
-    fun hasKraken(context: Context): Boolean {
+    fun krakenCredentials(context: Context): KrakenCredentials? {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return !prefs.getString("kraken_key", null).isNullOrBlank() && !prefs.getString("kraken_secret", null).isNullOrBlank()
+        val key = prefs.getString("kraken_key", null) ?: return null
+        val secret = prefs.getString("kraken_secret", null) ?: return null
+        return runCatching { KrakenCredentials(decrypt(key), decrypt(secret)) }.getOrNull()
+    }
+
+    fun hasKraken(context: Context): Boolean = krakenCredentials(context) != null
+
+    fun isKrakenVerified(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("kraken_verified", false)
+
+    fun setKrakenVerified(context: Context, verified: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean("kraken_verified", verified)
+            .apply()
     }
 
     fun clearKraken(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .remove("kraken_key").remove("kraken_secret").apply()
+            .remove("kraken_key")
+            .remove("kraken_secret")
+            .remove("kraken_verified")
+            .apply()
     }
 
     fun setIbkrSetupAcknowledged(context: Context, value: Boolean) {
@@ -61,7 +79,6 @@ object BrokerConnectionStore {
         return "$iv:$encrypted"
     }
 
-    @Suppress("unused")
     private fun decrypt(value: String): String {
         val parts = value.split(":", limit = 2)
         require(parts.size == 2)
