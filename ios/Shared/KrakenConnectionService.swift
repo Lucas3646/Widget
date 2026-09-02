@@ -2,10 +2,25 @@ import Foundation
 import CryptoKit
 import Security
 
+struct KrakenIOSPosition: Codable, Hashable {
+    let symbol: String
+    let valueEUR: Double
+    let dayChangeEUR: Double
+    let dayChangePercent: Double
+}
+
 struct KrakenIOSSnapshot: Codable, Hashable {
     let totalEUR: Double
+    let dayChangeEUR: Double
+    let dayChangePercent: Double
     let balances: [String: Double]
+    let positions: [KrakenIOSPosition]
     let updatedAt: Date
+}
+
+private struct KrakenTickerSnapshot {
+    let current: Double
+    let open: Double
 }
 
 enum KrakenKeychainStore {
@@ -54,6 +69,7 @@ enum KrakenKeychainStore {
 
 enum KrakenConnectionService {
     private static let base = URL(string: "https://api.kraken.com")!
+    private static let cashLike: Set<String> = ["EUR", "USD", "GBP", "CHF", "CAD", "AUD", "JPY", "USDT", "USDC"]
 
     static func refresh() async throws -> KrakenIOSSnapshot {
         guard let (apiKey, secret) = KrakenKeychainStore.credentials() else {
@@ -61,10 +77,40 @@ enum KrakenConnectionService {
         }
         let balances = try await balance(apiKey: apiKey, secret: secret).filter { abs($0.value) > 0.00000001 }
         var total = 0.0
-        for (asset, amount) in balances {
-            total += amount * (try await eurPrice(asset: asset))
+        var totalDayChange = 0.0
+        var positions: [KrakenIOSPosition] = []
+
+        for (rawAsset, amount) in balances {
+            let symbol = normalize(rawAsset)
+            guard let ticker = try? await eurTicker(asset: rawAsset) else { continue }
+            let value = amount * ticker.current
+            let dayChange = amount * (ticker.current - ticker.open)
+            let dayPercent = ticker.open > 0 ? (ticker.current / ticker.open - 1) * 100 : 0
+            total += value
+            totalDayChange += dayChange
+
+            if !cashLike.contains(symbol), ticker.current > 0, value > 0.01 {
+                positions.append(
+                    KrakenIOSPosition(
+                        symbol: symbol == "XBT" ? "BTC" : symbol,
+                        valueEUR: value,
+                        dayChangeEUR: dayChange,
+                        dayChangePercent: dayPercent
+                    )
+                )
+            }
         }
-        return KrakenIOSSnapshot(totalEUR: total, balances: balances, updatedAt: Date())
+
+        let previous = total - totalDayChange
+        let totalDayPercent = previous > 0 ? totalDayChange / previous * 100 : 0
+        return KrakenIOSSnapshot(
+            totalEUR: total,
+            dayChangeEUR: totalDayChange,
+            dayChangePercent: totalDayPercent,
+            balances: balances,
+            positions: positions,
+            updatedAt: Date()
+        )
     }
 
     private static func balance(apiKey: String, secret: String) async throws -> [String: Double] {
@@ -98,18 +144,22 @@ enum KrakenConnectionService {
         return Data(code).base64EncodedString()
     }
 
-    private static func eurPrice(asset raw: String) async throws -> Double {
+    private static func eurTicker(asset raw: String) async throws -> KrakenTickerSnapshot {
         let asset = normalize(raw)
-        if asset == "EUR" { return 1 }
+        if asset == "EUR" { return KrakenTickerSnapshot(current: 1, open: 1) }
         let candidates: [(String, Bool)] = asset == "XBT" ? [("XBTEUR", false), ("XXBTZEUR", false)] :
-            asset == "USD" ? [("EURUSD", true)] : [("\(asset)EUR", false)]
+            asset == "USD" ? [("EURUSD", true)] :
+            asset == "USDT" ? [("USDTEUR", false)] :
+            asset == "USDC" ? [("USDCEUR", false)] : [("\(asset)EUR", false)]
         for (pair, inverse) in candidates {
-            if let p = try? await ticker(pair: pair), p > 0 { return inverse ? 1 / p : p }
+            if let t = try? await ticker(pair: pair), t.current > 0, t.open > 0 {
+                return inverse ? KrakenTickerSnapshot(current: 1 / t.current, open: 1 / t.open) : t
+            }
         }
-        return 0
+        throw URLError(.cannotParseResponse)
     }
 
-    private static func ticker(pair: String) async throws -> Double {
+    private static func ticker(pair: String) async throws -> KrakenTickerSnapshot {
         var components = URLComponents(url: base.appendingPathComponent("/0/public/Ticker"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "pair", value: pair)]
         let (data, _) = try await URLSession.shared.data(from: components.url!)
@@ -117,8 +167,9 @@ enum KrakenConnectionService {
         guard let result = json?["result"] as? [String: Any],
               let first = result.values.first as? [String: Any],
               let close = first["c"] as? [String],
-              let price = close.first.flatMap(Double.init) else { throw URLError(.cannotParseResponse) }
-        return price
+              let current = close.first.flatMap(Double.init) else { throw URLError(.cannotParseResponse) }
+        let open = (first["o"] as? String).flatMap(Double.init) ?? current
+        return KrakenTickerSnapshot(current: current, open: open)
     }
 
     private static func normalize(_ raw: String) -> String {
