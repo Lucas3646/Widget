@@ -65,17 +65,25 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
             val eur = NumberFormat.getCurrencyInstance(Locale.FRANCE)
             val eur0 = NumberFormat.getCurrencyInstance(Locale.FRANCE).apply { maximumFractionDigits = 0 }
             val total = (kraken?.totalEur ?: 0.0) + (ibkr?.totalEur ?: 0.0)
-            val change = (kraken?.dayChangeEur ?: 0.0) + (ibkr?.periodChangeEur ?: 0.0)
-            val previous = total - change
-            val percent = if (previous > 0) change / previous * 100.0 else 0.0
+
+            // Kraken Balance only gives current quantities. Repricing today's quantities with an old
+            // BTC/FET price is NOT portfolio P&L, so never mix that synthetic number into performance.
+            // IBKR has an actual NAV history in the Flex statement; use its period endpoints instead.
+            val ibkrChart = ibkr?.chartValues.orEmpty()
+            val ibkrChange = if (ibkrChart.size >= 2) ibkrChart.last() - ibkrChart.first() else ibkr?.periodChangeEur ?: 0.0
+            val ibkrBase = if (ibkrChart.size >= 2) ibkrChart.first() else (ibkr?.totalEur ?: 0.0) - ibkrChange
+            val change = ibkrChange
+            val percent = if (ibkrBase > 0) change / ibkrBase * 100.0 else 0.0
+
+            // Top/Flop remains an asset-price ranking. Kraken is intentionally excluded until the
+            // connection has trade/cost-basis history; otherwise its percentages look like P&L but aren't.
             val positions = buildList {
-                kraken?.positions?.forEach { add(PortfolioDisplayPosition(it.symbol, it.valueEur, it.dayChangePercent)) }
                 ibkr?.positions?.forEach { add(PortfolioDisplayPosition(it.symbol, it.valueEur, it.periodChangePercent)) }
             }
             val hasSnapshot = kraken != null || ibkr != null
             val chartValues = when {
-                ibkr?.chartValues?.isNotEmpty() == true -> ibkr.chartValues.map { it + (kraken?.totalEur ?: 0.0) }
-                hasSnapshot -> listOf((total - change).coerceAtLeast(0.0), total)
+                ibkrChart.isNotEmpty() -> ibkrChart.map { it + (kraken?.totalEur ?: 0.0) }
+                hasSnapshot -> listOf(total, total)
                 else -> emptyList()
             }
 
@@ -83,11 +91,16 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
                 val views = RemoteViews(context.packageName, R.layout.widget_portfolio)
                 views.setTextViewText(R.id.portfolioTotal, if (hasSnapshot) eur.format(total) else "— €")
                 if (hasSnapshot) {
-                    views.setTextViewText(R.id.portfolioDayChange, signedMoney(change, eur))
-                    views.setTextViewText(R.id.portfolioDayPercent, String.format(Locale.FRANCE, "%+.2f %% · %s", percent, timeframe.label))
-                    val color = Color.parseColor(if (change >= 0) GREEN else RED)
-                    views.setTextColor(R.id.portfolioDayChange, color)
-                    views.setTextColor(R.id.portfolioDayPercent, color)
+                    if (ibkr != null) {
+                        views.setTextViewText(R.id.portfolioDayChange, signedMoney(change, eur))
+                        views.setTextViewText(R.id.portfolioDayPercent, String.format(Locale.FRANCE, "%+.2f %% · %s", percent, timeframe.label))
+                        val color = Color.parseColor(if (change >= 0) GREEN else RED)
+                        views.setTextColor(R.id.portfolioDayChange, color)
+                        views.setTextColor(R.id.portfolioDayPercent, color)
+                    } else {
+                        views.setTextViewText(R.id.portfolioDayChange, "— €")
+                        views.setTextViewText(R.id.portfolioDayPercent, "perf. indispo · ${timeframe.label}")
+                    }
                     views.setImageViewBitmap(R.id.portfolioChart, sparkline(chartValues, change >= 0))
                     fillRanking(views, listOf(R.id.portfolioTop1, R.id.portfolioTop2, R.id.portfolioTop3), positions.sortedByDescending { it.changePercent }.take(3), eur0)
                     fillRanking(views, listOf(R.id.portfolioFlop1, R.id.portfolioFlop2, R.id.portfolioFlop3), positions.sortedBy { it.changePercent }.take(3), eur0)
@@ -129,7 +142,6 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
             val height = 86
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             if (values.size < 2) return bitmap
-
             val min = values.minOrNull() ?: return bitmap
             val max = values.maxOrNull() ?: return bitmap
             val range = (max - min).takeIf { it > 0.0001 } ?: 1.0
@@ -139,50 +151,22 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
                 val y = pad + (height - pad * 2) * (1f - ((value - min) / range).toFloat())
                 x to y
             }
-
             val linePath = Path().apply {
                 moveTo(points.first().first, points.first().second)
                 for (i in 1 until points.lastIndex) {
-                    val current = points[i]
-                    val next = points[i + 1]
-                    val midX = (current.first + next.first) / 2f
-                    val midY = (current.second + next.second) / 2f
-                    quadTo(current.first, current.second, midX, midY)
+                    val current = points[i]; val next = points[i + 1]
+                    quadTo(current.first, current.second, (current.first + next.first) / 2f, (current.second + next.second) / 2f)
                 }
-                val last = points.last()
-                quadTo(last.first, last.second, last.first, last.second)
+                val last = points.last(); quadTo(last.first, last.second, last.first, last.second)
             }
-
             val accent = Color.parseColor(if (positive) GREEN else RED)
-            val fillPath = Path(linePath).apply {
-                lineTo(points.last().first, height.toFloat())
-                lineTo(points.first().first, height.toFloat())
-                close()
-            }
+            val fillPath = Path(linePath).apply { lineTo(points.last().first, height.toFloat()); lineTo(points.first().first, height.toFloat()); close() }
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.FILL
-                shader = LinearGradient(
-                    0f,
-                    0f,
-                    0f,
-                    height.toFloat(),
-                    Color.argb(105, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    Color.argb(0, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    Shader.TileMode.CLAMP
-                )
+                shader = LinearGradient(0f, 0f, 0f, height.toFloat(), Color.argb(105, Color.red(accent), Color.green(accent), Color.blue(accent)), Color.argb(0, Color.red(accent), Color.green(accent), Color.blue(accent)), Shader.TileMode.CLAMP)
             }
-            val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = accent
-                style = Paint.Style.STROKE
-                strokeWidth = 5f
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-            }
-
-            Canvas(bitmap).apply {
-                drawPath(fillPath, fillPaint)
-                drawPath(linePath, strokePaint)
-            }
+            val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent; style = Paint.Style.STROKE; strokeWidth = 5f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+            Canvas(bitmap).apply { drawPath(fillPath, fillPaint); drawPath(linePath, strokePaint) }
             return bitmap
         }
 
