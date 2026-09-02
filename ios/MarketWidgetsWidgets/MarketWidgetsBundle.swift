@@ -8,5 +8,7 @@ struct MarketWidgetsBundle: WidgetBundle {
         ATHDrawdownWidget()
         PortfolioWidget()
         DividendWidget()
+        MVRVWidget()
+        MacroWidget()
     }
 }
