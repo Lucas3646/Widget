@@ -25,8 +25,8 @@ enum IBKRFlexKeychainStore {
     private static func value(_ account:String)->String?{let q:[CFString:Any]=[kSecClass:kSecClassGenericPassword,kSecAttrService:service,kSecAttrAccount:account,kSecReturnData:true,kSecMatchLimit:kSecMatchLimitOne];var item:CFTypeRef?;guard SecItemCopyMatching(q as CFDictionary,&item)==errSecSuccess,let d=item as? Data else{return nil};return String(data:d,encoding:.utf8)}
 }
 
-private struct IBKRFlexPosition { let symbol:String; let quantity:Double; let markPrice:Double; let currency:String }
-private struct IBKRQuote { let current:Double; let reference:Double }
+struct IBKRFlexPosition { let symbol:String; let quantity:Double; let markPrice:Double; let currency:String }
+struct IBKRQuote { let current:Double; let reference:Double }
 
 final class IBKRFlexParser: NSObject, XMLParserDelegate {
     var positions:[IBKRFlexPosition]=[]
