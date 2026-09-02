@@ -3,4 +3,5 @@
     <string name="widget_description">Widget de marché 2×2 personnalisable</string>
     <string name="alert_widget_description">Alertes de prix sur vos actifs</string>
     <string name="mvrv_widget_description">BTC MVRV Z-Score 4×1</string>
+    <string name="drawdown_widget_description">Drawdown depuis l’ATH 2×1</string>
 </resources>
