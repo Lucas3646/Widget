@@ -6,5 +6,7 @@ struct MarketWidgetsBundle: WidgetBundle {
     var body: some Widget {
         MarketPriceWidget()
         ATHDrawdownWidget()
+        PortfolioWidget()
+        DividendWidget()
     }
 }
