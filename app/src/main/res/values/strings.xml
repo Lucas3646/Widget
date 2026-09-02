@@ -1,7 +1,9 @@
 <resources>
     <string name="app_name">Market Widgets</string>
-    <string name="widget_description">Widget de marché 2×2 personnalisable</string>
-    <string name="alert_widget_description">Alertes de prix sur vos actifs</string>
+    <string name="widget_description">Cours &amp; graphique d’un actif 2×2</string>
+    <string name="alert_widget_description">Alertes marché 4×2</string>
     <string name="mvrv_widget_description">BTC MVRV Z-Score 4×1</string>
-    <string name="drawdown_widget_description">Drawdown depuis l’ATH 2×1</string>
+    <string name="drawdown_widget_description">ATH Drawdown 2×1</string>
+    <string name="portfolio_widget_description">Portfolio IBKR + Kraken</string>
+    <string name="dividend_widget_description">Prochains dividendes IBKR</string>
 </resources>
