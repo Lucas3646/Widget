@@ -47,35 +47,43 @@ class DividendWidgetProvider : AppWidgetProvider() {
                 Intent(context, BrokerConnectionsActivity::class.java),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            views.setOnClickPendingIntent(R.id.dividendTitle, openConnections)
-            views.setOnClickPendingIntent(R.id.dividendSymbol, openConnections)
+            listOf(
+                R.id.dividendTitle,
+                R.id.dividendSymbol,
+                R.id.dividendCountdown,
+                R.id.dividendAmount,
+                R.id.dividendDate,
+                R.id.dividendReceivedYtd,
+                R.id.dividendRemaining
+            ).forEach { views.setOnClickPendingIntent(it, openConnections) }
 
             if (snapshot == null) {
-                if (BrokerConnectionStore.hasIbkrSetup(context)) {
-                    views.setTextViewText(R.id.dividendTitle, "DIVIDENDES · IBKR")
-                    views.setTextViewText(R.id.dividendSymbol, "Aucun dividende")
-                    views.setTextViewText(R.id.dividendAmount, "Aucune échéance trouvée dans la Flex Query")
-                    views.setTextViewText(R.id.dividendDate, "Touchez pour actualiser IBKR")
-                    views.setTextViewText(R.id.dividendDescription, "La Query doit contenir Open Dividend Accruals ou Cash Transactions.")
-                } else {
-                    views.setTextViewText(R.id.dividendTitle, "DIVIDENDES · IBKR")
-                    views.setTextViewText(R.id.dividendSymbol, "IBKR non connecté")
-                    views.setTextViewText(R.id.dividendAmount, "Connecte ton compte une seule fois")
-                    views.setTextViewText(R.id.dividendDate, "Touchez pour configurer")
-                    views.setTextViewText(R.id.dividendDescription, "")
-                }
+                views.setTextViewText(R.id.dividendTitle, "DIVIDENDES · IBKR")
+                views.setTextViewText(R.id.dividendSymbol, if (BrokerConnectionStore.hasIbkrSetup(context)) "Aucune donnée" else "IBKR non connecté")
+                views.setTextViewText(R.id.dividendCountdown, "J—")
+                views.setTextViewText(R.id.dividendAmount, "—")
+                views.setTextViewText(R.id.dividendDate, if (BrokerConnectionStore.hasIbkrSetup(context)) "Aucune échéance trouvée" else "Touchez pour configurer")
+                views.setTextViewText(R.id.dividendReceivedYtd, "— €")
+                views.setTextViewText(R.id.dividendRemaining, "— €")
+                views.setTextViewText(R.id.dividendDescription, "La Flex Query doit inclure Open Dividend Accruals + Cash Transactions.")
                 return views
             }
 
-            val formatter = runCatching {
-                NumberFormat.getCurrencyInstance(Locale.FRANCE).apply { currency = Currency.getInstance(snapshot.currency) }
+            val nextFormatter = runCatching {
+                NumberFormat.getCurrencyInstance(Locale.FRANCE).apply { currency = Currency.getInstance(snapshot.nextCurrency) }
             }.getOrElse { NumberFormat.getNumberInstance(Locale.FRANCE) }
-            val amount = formatter.format(snapshot.amount)
-            views.setTextViewText(R.id.dividendTitle, if (snapshot.isUpcoming) "PROCHAIN DIVIDENDE · IBKR" else "DERNIER DIVIDENDE · IBKR")
+            val eur = NumberFormat.getCurrencyInstance(Locale.FRANCE)
+            views.setTextViewText(R.id.dividendTitle, if (snapshot.hasUpcoming) "PROCHAIN DIVIDENDE · IBKR" else "DIVIDENDES · IBKR")
             views.setTextViewText(R.id.dividendSymbol, snapshot.symbol)
-            views.setTextViewText(R.id.dividendAmount, amount)
-            views.setTextViewText(R.id.dividendDate, if (snapshot.isUpcoming) "Prévu le ${snapshot.dateLabel}" else "Reçu le ${snapshot.dateLabel}")
-            views.setTextViewText(R.id.dividendDescription, snapshot.description)
+            views.setTextViewText(R.id.dividendCountdown, if (snapshot.hasUpcoming) "J-${snapshot.daysUntil.coerceAtLeast(0)}" else "—")
+            views.setTextViewText(R.id.dividendAmount, nextFormatter.format(snapshot.nextAmount))
+            views.setTextViewText(R.id.dividendDate, if (snapshot.hasUpcoming) "Prévu le ${snapshot.nextDateLabel}" else "Dernier reçu · ${snapshot.nextDateLabel}")
+            views.setTextViewText(R.id.dividendReceivedYtd, eur.format(snapshot.receivedYtdEur))
+            views.setTextViewText(R.id.dividendRemaining, eur.format(snapshot.remainingYearEur))
+            views.setTextViewText(
+                R.id.dividendDescription,
+                if (snapshot.hasUpcoming) "Restant = dividendes déjà déclarés par IBKR jusqu’au 31/12" else "Aucun prochain dividende déclaré dans la Flex Query"
+            )
             return views
         }
     }
