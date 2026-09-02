@@ -12,6 +12,6 @@
     <string name="mvrv_widget_description">BTC MVRV Z-Score 2×1</string>
     <string name="drawdown_widget_description">ATH Drawdown 2×1</string>
     <string name="portfolio_widget_description">Portfolio IBKR + Kraken</string>
-    <string name="dividend_widget_description">Prochains dividendes IBKR</string>
+    <string name="dividend_widget_description">Prochains dividendes IBKR 2×2</string>
     <string name="macro_widget_description">Prochain événement macro, consensus, précédent et résultat</string>
 </resources>
