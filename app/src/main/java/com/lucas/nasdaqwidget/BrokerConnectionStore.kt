@@ -16,6 +16,7 @@ object BrokerConnectionStore {
     private const val KEY_ALIAS = "market_widgets_broker_key"
 
     data class KrakenCredentials(val apiKey: String, val apiSecret: String)
+    data class IbkrFlexCredentials(val token: String, val queryId: String)
 
     fun saveKraken(context: Context, apiKey: String, apiSecret: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -33,41 +34,37 @@ object BrokerConnectionStore {
     }
 
     fun hasKraken(context: Context): Boolean = krakenCredentials(context) != null
+    fun isKrakenVerified(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("kraken_verified", false)
+    fun setKrakenVerified(context: Context, verified: Boolean) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("kraken_verified", verified).apply() }
+    fun clearKraken(context: Context) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("kraken_key").remove("kraken_secret").remove("kraken_verified").apply() }
 
-    fun isKrakenVerified(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("kraken_verified", false)
-
-    fun setKrakenVerified(context: Context, verified: Boolean) {
+    fun saveIbkrFlex(context: Context, token: String, queryId: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean("kraken_verified", verified)
+            .putString("ibkr_flex_token", encrypt(token.trim()))
+            .putString("ibkr_flex_query", encrypt(queryId.trim()))
+            .putBoolean("ibkr_verified", false)
+            .putBoolean("ibkr_setup", true)
             .apply()
     }
 
-    fun clearKraken(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .remove("kraken_key")
-            .remove("kraken_secret")
-            .remove("kraken_verified")
-            .apply()
+    fun ibkrFlexCredentials(context: Context): IbkrFlexCredentials? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val token = prefs.getString("ibkr_flex_token", null) ?: return null
+        val query = prefs.getString("ibkr_flex_query", null) ?: return null
+        return runCatching { IbkrFlexCredentials(decrypt(token), decrypt(query)) }.getOrNull()
     }
 
-    fun setIbkrSetupAcknowledged(context: Context, value: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("ibkr_setup", value).apply()
-    }
-
-    fun hasIbkrSetup(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("ibkr_setup", false)
+    fun hasIbkrSetup(context: Context): Boolean = ibkrFlexCredentials(context) != null
+    fun isIbkrVerified(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("ibkr_verified", false)
+    fun setIbkrVerified(context: Context, verified: Boolean) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("ibkr_verified", verified).apply() }
+    fun setIbkrSetupAcknowledged(context: Context, value: Boolean) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("ibkr_setup", value).apply() }
+    fun clearIbkr(context: Context) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("ibkr_flex_token").remove("ibkr_flex_query").remove("ibkr_verified").remove("ibkr_setup").apply() }
 
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .build()
-        )
+        generator.init(KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         return generator.generateKey()
     }
 
@@ -80,8 +77,7 @@ object BrokerConnectionStore {
     }
 
     private fun decrypt(value: String): String {
-        val parts = value.split(":", limit = 2)
-        require(parts.size == 2)
+        val parts = value.split(":", limit = 2); require(parts.size == 2)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)))
         return String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), StandardCharsets.UTF_8)
