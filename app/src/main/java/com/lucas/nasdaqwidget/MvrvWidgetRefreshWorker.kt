@@ -14,7 +14,8 @@ class MvrvWidgetRefreshWorker(
             MvrvWidgetProvider.updateAll(applicationContext)
         }.fold(
             onSuccess = { Result.success() },
-            onFailure = {
+            onFailure = { error ->
+                MvrvRepository.recordError(applicationContext, error)
                 MvrvWidgetProvider.updateAll(applicationContext)
                 Result.retry()
             }
