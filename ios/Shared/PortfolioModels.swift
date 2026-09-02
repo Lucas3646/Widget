@@ -23,6 +23,7 @@ struct PortfolioPositionSnapshot: Codable, Hashable, Identifiable {
 struct PortfolioSnapshot: Codable, Hashable {
     let accounts: [BrokerAccountSnapshot]
     let positions: [PortfolioPositionSnapshot]
+    let chartValues: [Double]
     let updatedAt: Date
 
     var totalEUR: Double { accounts.reduce(0) { $0 + $1.valueEUR } }
@@ -47,24 +48,29 @@ struct PortfolioSnapshot: Codable, Hashable {
             PortfolioPositionSnapshot(broker: .ibkr, symbol: "AMD", valueEUR: 1260, dayChangePercent: -1.32),
             PortfolioPositionSnapshot(broker: .ibkr, symbol: "TSLA", valueEUR: 1540, dayChangePercent: -2.14)
         ],
+        chartValues: [17_850, 17_920, 17_880, 18_040, 18_110, 18_060, 18_240, 18_410, 18_360, 18_642],
         updatedAt: Date()
     )
 }
 
 struct DividendSnapshot: Codable, Hashable {
     let symbol: String
-    let companyName: String
-    let amountPerShare: Double
-    let currency: String
-    let exDividendDate: Date
-    let estimatedAmount: Double?
+    let nextAmount: Double
+    let nextCurrency: String
+    let nextDate: Date
+    let daysUntil: Int
+    let receivedYTDEUR: Double
+    let remainingYearEUR: Double
+    let hasUpcoming: Bool
 
     static let preview = DividendSnapshot(
         symbol: "KO",
-        companyName: "Coca-Cola",
-        amountPerShare: 0.51,
-        currency: "USD",
-        exDividendDate: Calendar.current.date(byAdding: .day, value: 11, to: Date()) ?? Date(),
-        estimatedAmount: 12.75
+        nextAmount: 12.75,
+        nextCurrency: "USD",
+        nextDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date(),
+        daysUntil: 3,
+        receivedYTDEUR: 84.20,
+        remainingYearEUR: 41.60,
+        hasUpcoming: true
     )
 }
