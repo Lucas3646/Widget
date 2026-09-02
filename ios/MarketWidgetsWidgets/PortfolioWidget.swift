@@ -11,21 +11,58 @@ struct PortfolioWidgetProvider: TimelineProvider {
 struct PortfolioSparkline: View {
     let values: [Double]
     let positive: Bool
+
+    private var accent: Color {
+        positive ? Color(red: 56/255, green: 242/255, blue: 122/255) : Color(red: 1, green: 107/255, blue: 107/255)
+    }
+
     var body: some View {
         GeometryReader { geo in
+            ZStack {
+                smoothPath(in: geo.size, closeToBottom: true)
+                    .fill(
+                        LinearGradient(
+                            colors: [accent.opacity(0.38), accent.opacity(0.14), accent.opacity(0.0)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                smoothPath(in: geo.size, closeToBottom: false)
+                    .stroke(accent, style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
+            }
+        }
+    }
+
+    private func smoothPath(in size: CGSize, closeToBottom: Bool) -> Path {
+        Path { path in
+            guard values.count > 1 else { return }
             let minValue = values.min() ?? 0
             let maxValue = values.max() ?? 1
             let range = max(maxValue - minValue, 0.0001)
-            Path { path in
-                guard values.count > 1 else { return }
-                for (index, value) in values.enumerated() {
-                    let x = geo.size.width * CGFloat(index) / CGFloat(max(values.count - 1, 1))
-                    let ratio = (value - minValue) / range
-                    let y = geo.size.height * (1 - CGFloat(ratio))
-                    if index == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+            let points: [CGPoint] = values.enumerated().map { index, value in
+                let x = size.width * CGFloat(index) / CGFloat(max(values.count - 1, 1))
+                let ratio = (value - minValue) / range
+                let y = size.height * (1 - CGFloat(ratio))
+                return CGPoint(x: x, y: y)
+            }
+
+            guard let first = points.first, let last = points.last else { return }
+            path.move(to: first)
+            if points.count > 2 {
+                for index in 1..<points.count - 1 {
+                    let current = points[index]
+                    let next = points[index + 1]
+                    let midpoint = CGPoint(x: (current.x + next.x) / 2, y: (current.y + next.y) / 2)
+                    path.addQuadCurve(to: midpoint, control: current)
                 }
             }
-            .stroke(positive ? Color(red: 56/255, green: 242/255, blue: 122/255) : .red, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+            path.addQuadCurve(to: last, control: last)
+
+            if closeToBottom {
+                path.addLine(to: CGPoint(x: last.x, y: size.height))
+                path.addLine(to: CGPoint(x: first.x, y: size.height))
+                path.closeSubpath()
+            }
         }
     }
 }
