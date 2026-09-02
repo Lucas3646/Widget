@@ -7,14 +7,16 @@
     android:background="@drawable/widget_background">
 
     <TextView
+        android:id="@+id/dividendTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="PROCHAIN DIVIDENDE"
+        android:text="DIVIDENDES · IBKR"
         android:textColor="#38F27A"
         android:textStyle="bold"
         android:textSize="12sp" />
 
     <TextView
+        android:id="@+id/dividendSymbol"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
@@ -24,18 +26,30 @@
         android:textSize="22sp" />
 
     <TextView
+        android:id="@+id/dividendAmount"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
-        android:text="Données à connecter"
+        android:text="Connexion requise"
         android:textColor="#8EA0B2"
         android:textSize="14sp" />
 
     <TextView
+        android:id="@+id/dividendDate"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        android:text="Montant · date ex-dividende · estimation"
+        android:text="Ouvre Market Widgets"
         android:textColor="#FFFFFF"
         android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/dividendDescription"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text=""
+        android:textColor="#8EA0B2"
+        android:textSize="11sp"
+        android:maxLines="2" />
 </LinearLayout>
