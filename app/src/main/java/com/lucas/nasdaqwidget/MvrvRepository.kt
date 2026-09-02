@@ -17,61 +17,53 @@ data class MvrvSnapshot(
 object MvrvRepository {
     private const val PREFS = "btc_mvrv_snapshot"
     private const val HIGH_ZONE_Z = 7.0
-    private const val BASE_ENDPOINT =
-        "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
+    private const val COIN_METRICS = "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
+    private const val BGEOMETRICS = "https://bitcoin-data.com/v1"
 
     fun refresh(context: Context): MvrvSnapshot {
         clearLastError(context)
 
-        val direct = runCatching { fetchLatest("CapMVRVZ") }.getOrNull()
+        // Coin Metrics made CapMVRVZ an advanced metric. Prefer the public
+        // BGeometrics endpoint, which exposes MVRV Z-Score without a token,
+        // then keep Coin Metrics as a fallback for resilience.
+        val bgZ = runCatching {
+            val body = getJson("$BGEOMETRICS/mvrv-zscore/last")
+            extractNumber(body, listOf("mvrv-zscore", "mvrv_zscore", "mvrvZScore", "zScore", "zscore", "value"))
+        }.getOrNull()
+
+        val direct = if (bgZ == null) runCatching { fetchLatest("CapMVRVZ") }.getOrNull() else null
         val directZ = direct?.optString("CapMVRVZ")?.toDoubleOrNull()
 
-        val historical = if (directZ == null) fetchHistoricalCaps() else null
+        val historical = if (bgZ == null && directZ == null) runCatching { fetchHistoricalCaps() }.getOrNull() else null
         val computed = historical?.let { computeFromHistory(it) }
 
-        val zScore = directZ ?: computed?.zScore
-            ?: throw IllegalStateException("MVRV Z indisponible")
+        val zScore = bgZ ?: directZ ?: computed?.zScore
+            ?: throw IllegalStateException("MVRV Z indisponible sur les sources publiques")
 
-        val latestMarketCap = computed?.marketCap
-            ?: runCatching { fetchLatest("CapMrktCurUSD") }
-                .getOrNull()
-                ?.optString("CapMrktCurUSD")
-                ?.toDoubleOrNull()
+        val sourcePrice = runCatching {
+            val body = getJson("$BGEOMETRICS/btc-price/last")
+            extractNumber(body, listOf("price", "btcPrice", "btc_price", "close", "value"))
+        }.getOrNull() ?: runCatching {
+            fetchLatest("PriceUSD").optString("PriceUSD").toDoubleOrNull()
+        }.getOrNull()
 
-        val latestRealizedCap = computed?.realizedCap
-            ?: runCatching { fetchLatest("CapRealUSD") }
-                .getOrNull()
-                ?.optString("CapRealUSD")
-                ?.toDoubleOrNull()
-
-        val stdDev = computed?.stdDev ?: if (
-            latestMarketCap != null && latestRealizedCap != null && kotlin.math.abs(zScore) > 0.000001
-        ) {
-            (latestMarketCap - latestRealizedCap) / zScore
-        } else null
-
-        val sourcePrice = runCatching { fetchLatest("PriceUSD") }
-            .getOrNull()
-            ?.optString("PriceUSD")
-            ?.toDoubleOrNull()
-
+        // Keep the Z7 price estimate only when the cap inputs are available.
+        // The Z-score itself remains usable even when Coin Metrics restricts
+        // those auxiliary fields.
+        val capData = computed ?: runCatching { computeFromHistory(fetchHistoricalCaps()) }.getOrNull()
         val targetPrice = if (
-            latestMarketCap != null && latestMarketCap > 0.0 &&
-            latestRealizedCap != null && stdDev != null && stdDev > 0.0 &&
-            sourcePrice != null && sourcePrice > 0.0
+            capData != null && sourcePrice != null && sourcePrice > 0.0 && capData.marketCap > 0.0
         ) {
-            val targetMarketCap = latestRealizedCap + HIGH_ZONE_Z * stdDev
-            if (targetMarketCap > 0.0) sourcePrice * (targetMarketCap / latestMarketCap) else null
+            val targetMarketCap = capData.realizedCap + HIGH_ZONE_Z * capData.stdDev
+            if (targetMarketCap > 0.0) sourcePrice * (targetMarketCap / capData.marketCap) else null
         } else null
 
-        val snapshot = MvrvSnapshot(
+        return MvrvSnapshot(
             zScore = zScore,
             estimatedHighZonePrice = targetPrice,
             sourcePrice = sourcePrice,
             updatedAtMillis = System.currentTimeMillis()
-        )
-        save(context, snapshot)
-        return snapshot
+        ).also { save(context, it) }
     }
 
     fun recordError(context: Context, throwable: Throwable) {
@@ -83,15 +75,11 @@ object MvrvRepository {
     }
 
     fun lastError(context: Context): String? =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString("lastError", null)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("lastError", null)
 
     private fun clearLastError(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove("lastError")
-            .remove("lastErrorAt")
-            .apply()
+            .edit().remove("lastError").remove("lastErrorAt").apply()
     }
 
     private data class ComputedMvrv(
@@ -109,7 +97,9 @@ object MvrvRepository {
         for (i in 0 until data.length()) {
             val item = data.optJSONObject(i) ?: continue
             val marketCap = item.optString("CapMrktCurUSD").toDoubleOrNull()
-            val realizedCap = item.optString("CapRealUSD").toDoubleOrNull()
+            val realizedCap = sequenceOf("CapRealUSD", "CapRealizedUSD")
+                .mapNotNull { item.optString(it).toDoubleOrNull() }
+                .firstOrNull()
             if (marketCap != null && marketCap.isFinite() && marketCap > 0.0) {
                 marketCaps += marketCap
                 if (realizedCap != null && realizedCap.isFinite() && realizedCap > 0.0) {
@@ -120,7 +110,6 @@ object MvrvRepository {
         }
 
         if (marketCaps.size < 30 || latestMarketCap == null || latestRealizedCap == null) return null
-
         val mean = marketCaps.average()
         var sumSquared = 0.0
         marketCaps.forEach { value ->
@@ -139,62 +128,78 @@ object MvrvRepository {
     }
 
     private fun fetchHistoricalCaps(): JSONArray {
-        val endpoint = buildString {
-            append(BASE_ENDPOINT)
-            append("?assets=btc")
-            append("&metrics=CapMrktCurUSD,CapRealUSD")
-            append("&frequency=1d")
-            append("&page_size=10000")
-            append("&paging_from=start")
-            append("&ignore_forbidden_errors=true")
-            append("&ignore_unsupported_errors=true")
+        // Try both realized-cap field names because community coverage has
+        // changed over time.
+        val metricSets = listOf(
+            "CapMrktCurUSD,CapRealUSD",
+            "CapMrktCurUSD,CapRealizedUSD"
+        )
+        var last: Throwable? = null
+        metricSets.forEach { metrics ->
+            runCatching {
+                fetchData(
+                    "$COIN_METRICS?assets=btc&metrics=$metrics&frequency=1d&page_size=10000&paging_from=start&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+                )
+            }.onSuccess { data -> if (data.length() > 0) return data }
+                .onFailure { last = it }
         }
-        return fetchData(endpoint)
+        throw last ?: IllegalStateException("Historique MVRV indisponible")
     }
 
     private fun fetchLatest(metric: String): JSONObject {
-        val endpoint = buildString {
-            append(BASE_ENDPOINT)
-            append("?assets=btc")
-            append("&metrics=")
-            append(metric)
-            append("&frequency=1d")
-            append("&limit_per_asset=1")
-            append("&paging_from=end")
-        }
-        val data = fetchData(endpoint)
+        val data = fetchData("$COIN_METRICS?assets=btc&metrics=$metric&frequency=1d&limit_per_asset=1&paging_from=end&ignore_forbidden_errors=true&ignore_unsupported_errors=true")
         if (data.length() == 0) throw IllegalStateException("Aucune donnée pour $metric")
         return data.getJSONObject(data.length() - 1)
     }
 
     private fun fetchData(endpoint: String): JSONArray {
+        val body = getJson(endpoint)
+        val root = JSONObject(body)
+        return root.optJSONArray("data") ?: throw IllegalStateException("Réponse Coin Metrics invalide")
+    }
+
+    private fun getJson(endpoint: String): String {
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 15_000
             readTimeout = 25_000
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("Accept-Encoding", "gzip")
-            setRequestProperty("User-Agent", "MarketWidgets/1.0 Android")
+            setRequestProperty("User-Agent", "MarketWidgets/1.9 Android")
         }
-
-        try {
+        return try {
             val code = connection.responseCode
-            if (code !in 200..299) {
-                val error = runCatching {
-                    connection.errorStream?.bufferedReader()?.use { it.readText() }
-                }.getOrNull().orEmpty()
-                throw IllegalStateException(
-                    "Coin Metrics HTTP $code${if (error.isNotBlank()) ": ${error.take(120)}" else ""}"
-                )
-            }
-
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
-            val root = JSONObject(body)
-            return root.optJSONArray("data")
-                ?: throw IllegalStateException("Réponse Coin Metrics invalide")
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IllegalStateException("HTTP $code${if (body.isNotBlank()) ": ${body.take(100)}" else ""}")
+            body
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun extractNumber(body: String, preferredKeys: List<String>): Double? {
+        val parsed: Any = runCatching { JSONObject(body) }.getOrElse {
+            runCatching { JSONArray(body) }.getOrNull() ?: return null
+        }
+        return findNumber(parsed, preferredKeys.map { it.lowercase() }.toSet())
+    }
+
+    private fun findNumber(node: Any?, preferred: Set<String>): Double? {
+        when (node) {
+            is JSONObject -> {
+                val keys = node.keys().asSequence().toList()
+                keys.firstOrNull { it.lowercase() in preferred }?.let { key ->
+                    val raw = node.opt(key)
+                    when (raw) {
+                        is Number -> return raw.toDouble()
+                        is String -> raw.replace(",", "").toDoubleOrNull()?.let { return it }
+                    }
+                }
+                keys.forEach { key -> findNumber(node.opt(key), preferred)?.let { return it } }
+            }
+            is JSONArray -> for (i in 0 until node.length()) findNumber(node.opt(i), preferred)?.let { return it }
+        }
+        return null
     }
 
     fun cached(context: Context): MvrvSnapshot? {
@@ -225,14 +230,11 @@ object MvrvRepository {
             .edit()
             .putLong("zScore", snapshot.zScore.toBits())
             .apply {
-                snapshot.estimatedHighZonePrice?.let { putLong("estimatedHighZonePrice", it.toBits()) }
-                    ?: remove("estimatedHighZonePrice")
-                snapshot.sourcePrice?.let { putLong("sourcePrice", it.toBits()) }
-                    ?: remove("sourcePrice")
+                snapshot.estimatedHighZonePrice?.let { putLong("estimatedHighZonePrice", it.toBits()) } ?: remove("estimatedHighZonePrice")
+                snapshot.sourcePrice?.let { putLong("sourcePrice", it.toBits()) } ?: remove("sourcePrice")
             }
             .putLong("updatedAt", snapshot.updatedAtMillis)
-            .remove("lastError")
-            .remove("lastErrorAt")
+            .remove("lastError").remove("lastErrorAt")
             .apply()
     }
 }
