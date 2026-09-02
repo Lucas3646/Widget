@@ -10,6 +10,7 @@ struct IBKRDividendWidgetSnapshot: Codable, Hashable {
     let receivedYTDEUR: Double
     let remainingYearEUR: Double
     let isUpcoming: Bool
+    let estimatedUpcoming: Bool
 }
 
 private struct IBKRDividendRow {
@@ -78,17 +79,23 @@ enum IBKRDividendService {
         let startOfToday = calendar.startOfDay(for: now)
         let year = calendar.component(.year, from: now)
         let yearStart = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) ?? now
+        let priorYearStart = calendar.date(byAdding: .year, value: -1, to: yearStart) ?? yearStart
         let yearEnd = calendar.date(from: DateComponents(year: year, month: 12, day: 31, hour: 23, minute: 59, second: 59)) ?? now
-        let upcoming = parser.rows.filter { $0.upcoming && $0.date >= startOfToday && $0.date <= yearEnd }.sorted { $0.date < $1.date }
-        let received = parser.rows.filter { !$0.upcoming && $0.date >= yearStart && $0.date <= now }
+
+        let receivedHistory = parser.rows.filter { !$0.upcoming && $0.date >= priorYearStart && $0.date <= now }
+        let receivedYTD = receivedHistory.filter { $0.date >= yearStart }
+        let declared = parser.rows.filter { $0.upcoming && $0.date >= startOfToday && $0.date <= yearEnd }.sorted { $0.date < $1.date }
+        let inferred = declared.isEmpty ? inferUpcoming(receivedHistory, from: startOfToday, through: yearEnd, calendar: calendar) : []
+        let upcoming = declared.isEmpty ? inferred : declared
+        let estimated = declared.isEmpty && !inferred.isEmpty
         let next = upcoming.first
 
-        var receivedYTD = 0.0
-        for row in received { receivedYTD += row.amount * (await fxToEUR(row.currency)) }
+        var receivedTotal = 0.0
+        for row in receivedYTD { receivedTotal += abs(row.amount) * (await fxToEUR(row.currency)) }
         var remaining = 0.0
-        for row in upcoming { remaining += row.amount * (await fxToEUR(row.currency)) }
+        for row in upcoming { remaining += abs(row.amount) * (await fxToEUR(row.currency)) }
 
-        guard let source = next ?? received.max(by: { $0.date < $1.date }) else {
+        guard let source = next ?? receivedYTD.max(by: { $0.date < $1.date }) else {
             UserDefaults.standard.removeObject(forKey: cacheKey)
             WidgetCenter.shared.reloadTimelines(ofKind: "DividendWidget")
             return nil
@@ -96,17 +103,50 @@ enum IBKRDividendService {
         let days = next == nil ? 0 : max(calendar.dateComponents([.day], from: startOfToday, to: calendar.startOfDay(for: source.date)).day ?? 0, 0)
         let snapshot = IBKRDividendWidgetSnapshot(
             symbol: source.symbol.isEmpty ? "IBKR" : source.symbol,
-            amount: source.amount,
+            amount: abs(source.amount),
             currency: source.currency,
             date: source.date,
             daysUntil: days,
-            receivedYTDEUR: receivedYTD,
+            receivedYTDEUR: receivedTotal,
             remainingYearEUR: remaining,
-            isUpcoming: next != nil
+            isUpcoming: next != nil,
+            estimatedUpcoming: estimated
         )
         if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: cacheKey) }
         WidgetCenter.shared.reloadTimelines(ofKind: "DividendWidget")
         return snapshot
+    }
+
+    private static func inferUpcoming(_ received: [IBKRDividendRow], from today: Date, through yearEnd: Date, calendar: Calendar) -> [IBKRDividendRow] {
+        var result: [IBKRDividendRow] = []
+        let grouped = Dictionary(grouping: received.filter { !$0.symbol.isEmpty }) { $0.symbol.uppercased() }
+        for (symbol, rows) in grouped {
+            let perDay = Dictionary(grouping: rows) { calendar.startOfDay(for: $0.date) }
+                .map { date, dayRows in
+                    IBKRDividendRow(symbol: symbol, amount: dayRows.reduce(0) { $0 + abs($1.amount) }, currency: dayRows.first?.currency ?? "EUR", date: date, upcoming: false)
+                }
+                .sorted { $0.date < $1.date }
+            guard perDay.count >= 2 else { continue }
+            let intervals = zip(perDay, perDay.dropFirst()).compactMap { a, b -> Int? in
+                let d = calendar.dateComponents([.day], from: a.date, to: b.date).day ?? 0
+                return (20...400).contains(d) ? d : nil
+            }.suffix(4).sorted()
+            guard !intervals.isEmpty else { continue }
+            let interval = intervals[intervals.count / 2]
+            let last = perDay.last!
+            var nextDate = calendar.date(byAdding: .day, value: interval, to: last.date) ?? last.date
+            var guardCount = 0
+            while nextDate < today && guardCount < 20 {
+                nextDate = calendar.date(byAdding: .day, value: interval, to: nextDate) ?? nextDate
+                guardCount += 1
+            }
+            while nextDate <= yearEnd && guardCount < 30 {
+                result.append(IBKRDividendRow(symbol: symbol, amount: last.amount, currency: last.currency, date: nextDate, upcoming: true))
+                nextDate = calendar.date(byAdding: .day, value: interval, to: nextDate) ?? yearEnd.addingTimeInterval(1)
+                guardCount += 1
+            }
+        }
+        return result.sorted { $0.date < $1.date }
     }
 
     static func clear() {
@@ -144,7 +184,7 @@ enum IBKRDividendService {
 
     private static func get(_ url: String) async throws -> String {
         var request = URLRequest(url: URL(string: url)!)
-        request.setValue("MarketWidgets/1.7 iOS", forHTTPHeaderField: "User-Agent")
+        request.setValue("MarketWidgets/1.9 iOS", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode < 300 else { throw URLError(.badServerResponse) }
         return String(decoding: data, as: UTF8.self)
