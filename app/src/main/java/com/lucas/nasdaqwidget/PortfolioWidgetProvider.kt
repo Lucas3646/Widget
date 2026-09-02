@@ -38,14 +38,27 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
             val kraken=KrakenPortfolioRepository.cached(context); val ibkr=IbkrFlexRepository.cached(context); val timeframe=PortfolioTimeframeStore.get(context)
             val eur=NumberFormat.getCurrencyInstance(Locale.FRANCE); val eur0=NumberFormat.getCurrencyInstance(Locale.FRANCE).apply{maximumFractionDigits=0}
             val total=(kraken?.totalEur?:0.0)+(ibkr?.totalEur?:0.0)
-            val ibkrChart=ibkr?.chartValues.orEmpty(); val ibkrChange=if(ibkrChart.size>=2) ibkrChart.last()-ibkrChart.first() else ibkr?.periodChangeEur?:0.0; val ibkrBase=if(ibkrChart.size>=2) ibkrChart.first() else (ibkr?.totalEur?:0.0)-ibkrChange
-            val krakenChange=kraken?.dayChangeEur?:0.0; val krakenBase=(kraken?.totalEur?:0.0)-krakenChange
-            val change=ibkrChange+krakenChange; val base=ibkrBase+krakenBase; val percent=if(base>0) change/base*100 else 0.0
             val positions=buildList { ibkr?.positions?.forEach{add(PortfolioDisplayPosition(it.symbol,it.valueEur,it.periodChangePercent))}; kraken?.positions?.forEach{add(PortfolioDisplayPosition(it.symbol,it.valueEur,it.dayChangePercent))} }
+
+            // Performance is computed from invested assets only. Cash remains in total portfolio value,
+            // but deposits/withdrawals and idle EUR/USD/USDC do not create portfolio performance.
+            var investedBase=0.0
+            var change=0.0
+            positions.forEach { p ->
+                val factor=1.0+p.changePercent/100.0
+                if(factor>0.000001){
+                    val baseValue=p.valueEur/factor
+                    if(baseValue.isFinite()&&baseValue>0){investedBase+=baseValue;change+=p.valueEur-baseValue}
+                }
+            }
+            val percent=if(investedBase>0)change/investedBase*100.0 else 0.0
             val top=positions.filter{it.changePercent>0.0001}.sortedByDescending{it.changePercent}.take(3)
             val flop=positions.filter{it.changePercent< -0.0001}.sortedBy{it.changePercent}.take(3)
-            val hasSnapshot=kraken!=null||ibkr!=null; val hasPerformance=ibkr!=null || (kraken?.positions?.isNotEmpty()==true)
-            val chartValues=when{ibkrChart.isNotEmpty()->ibkrChart.map{it+(kraken?.totalEur?:0.0)};hasSnapshot->listOf(total,total);else->emptyList()}
+            val hasSnapshot=kraken!=null||ibkr!=null; val hasPerformance=investedBase>0.0
+
+            // NAV includes cash flows, so do not use it as a performance curve. Until a cash-flow-adjusted
+            // historical series is available, show a neutral two-point line rather than a misleading chart.
+            val chartValues=if(hasSnapshot)listOf(total,total) else emptyList()
             ids.forEach { id ->
                 val views=RemoteViews(context.packageName,R.layout.widget_portfolio); views.setTextViewText(R.id.portfolioTotal,if(hasSnapshot)eur.format(total)else"— €")
                 if(hasSnapshot){
