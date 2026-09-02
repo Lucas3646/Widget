@@ -15,10 +15,11 @@
         android:textSize="12sp" />
 
     <TextView
+        android:id="@+id/portfolioTotal"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="Portfolio"
+        android:text="— €"
         android:textColor="#FFFFFF"
         android:textStyle="bold"
         android:textSize="28sp" />
@@ -33,18 +34,20 @@
         android:textSize="14sp" />
 
     <TextView
+        android:id="@+id/portfolioIbkr"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="14dp"
-        android:text="IBKR · données à connecter"
+        android:text="IBKR · à connecter"
         android:textColor="#FFFFFF"
         android:textSize="13sp" />
 
     <TextView
+        android:id="@+id/portfolioKraken"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
-        android:text="Kraken · données à connecter"
+        android:text="Kraken · à connecter"
         android:textColor="#8EA0B2"
         android:textSize="13sp" />
 </LinearLayout>
