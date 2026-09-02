@@ -104,19 +104,50 @@ class MainActivity : AppCompatActivity() {
         form.addView(selectedText)
 
         assetInput.onItemClickListener = android.widget.AdapterView.OnItemClickListener { _, _, position, _ ->
-            val asset = suggestions.getOrNull(position) ?: return@OnItemClickListener
+            val clicked = suggestionAdapter.getItem(position).orEmpty()
+            val clickedSymbol = clicked.substringBefore(" — ").trim()
+            val asset = suggestions.firstOrNull { it.symbol.equals(clickedSymbol, ignoreCase = true) }
+                ?: return@OnItemClickListener
+            pendingSearch?.let(searchHandler::removeCallbacks)
             selectedAssetSymbol = asset.symbol
             assetInput.setText(asset.symbol, false)
-            selectedText.text = "✓ ${asset.name} · ${asset.type}${if (asset.exchange.isNotBlank()) " · ${asset.exchange}" else ""}"
+
+            val identity = "✓ ${asset.name} · ${asset.type}${if (asset.exchange.isNotBlank()) " · ${asset.exchange}" else ""}"
+            val cached = MarketRepository.cached(this@MainActivity, asset.symbol)
+            selectedText.text = if (cached != null) {
+                "$identity\nCours actuel : ${formatCurrentPrice(cached.price)}  ·  actualisation…"
+            } else {
+                "$identity\nCours actuel : chargement…"
+            }
             selectedText.setTextColor(Color.rgb(56, 242, 122))
+
+            Thread {
+                val fresh = runCatching {
+                    MarketRepository.fetchAndCache(this@MainActivity, asset.symbol)
+                }.getOrNull()
+                runOnUiThread {
+                    if (!selectedAssetSymbol.equals(asset.symbol, ignoreCase = true)) return@runOnUiThread
+                    if (!assetInput.text.toString().trim().equals(asset.symbol, ignoreCase = true)) return@runOnUiThread
+                    selectedText.text = if (fresh != null) {
+                        val sign = if (fresh.changePercent >= 0.0) "+" else ""
+                        "$identity\nCours actuel : ${formatCurrentPrice(fresh.price)}  ·  $sign${String.format(Locale.FRANCE, "%.2f", fresh.changePercent)} % aujourd'hui"
+                    } else if (cached != null) {
+                        "$identity\nCours actuel : ${formatCurrentPrice(cached.price)} · donnée en cache"
+                    } else {
+                        "$identity\nCours actuel indisponible"
+                    }
+                    selectedText.setTextColor(if (fresh != null || cached != null) Color.rgb(56, 242, 122) else Color.rgb(241, 176, 67))
+                }
+            }.start()
         }
 
         assetInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 val query = s?.toString().orEmpty().trim()
-                if (!selectedAssetSymbol.equals(query, ignoreCase = true)) selectedAssetSymbol = null
                 pendingSearch?.let(searchHandler::removeCallbacks)
+                if (selectedAssetSymbol.equals(query, ignoreCase = true)) return
+                selectedAssetSymbol = null
                 if (query.isBlank()) {
                     suggestions = emptyList()
                     suggestionAdapter.clear()
@@ -296,6 +327,16 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         pendingSearch?.let(searchHandler::removeCallbacks)
         super.onDestroy()
+    }
+
+    private fun formatCurrentPrice(value: Double): String {
+        val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
+        val pattern = when {
+            value >= 1_000.0 -> "#,##0.00"
+            value >= 1.0 -> "#,##0.####"
+            else -> "0.########"
+        }
+        return DecimalFormat(pattern, symbols).format(value)
     }
 
     private fun renderAlerts() {
