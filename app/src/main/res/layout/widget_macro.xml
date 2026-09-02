@@ -1,12 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/macroRoot" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center_horizontal" android:paddingHorizontal="7dp" android:paddingVertical="8dp" android:background="@drawable/widget_background">
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/macroRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:paddingHorizontal="7dp"
+    android:paddingVertical="8dp"
+    android:background="@drawable/widget_background">
+
     <TextView android:id="@+id/macroTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:text="MACRO" android:textColor="#38F27A" android:textSize="9sp" android:textStyle="bold" />
     <TextView android:id="@+id/macroEvent" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:ellipsize="end" android:gravity="center" android:maxLines="1" android:text="CPI" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" />
     <TextView android:id="@+id/macroCountdown" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="1dp" android:gravity="center" android:text="J-2 · 14:30" android:textColor="#CDD8E4" android:textSize="9sp" android:textStyle="bold" />
     <TextView android:id="@+id/macroForecast" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:gravity="center" android:text="Att. 2,8%" android:textColor="#8EA0B2" android:textSize="8sp" />
     <TextView android:id="@+id/macroActual" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:text="Rés. —" android:textColor="#FFFFFF" android:textSize="9sp" android:textStyle="bold" />
     <TextView android:id="@+id/macroPrevious" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:text="Préc. —" android:textColor="#708396" android:textSize="7sp" />
-    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginTop="5dp" android:layout_marginBottom="4dp" android:background="#263747" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:gravity="center"
+        android:text="────────"
+        android:textColor="#263747"
+        android:textSize="7sp" />
+
     <TextView android:id="@+id/macroEvent2" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:ellipsize="end" android:maxLines="1" android:text="PROCHAIN" android:textColor="#FFFFFF" android:textSize="10sp" android:textStyle="bold" />
     <TextView android:id="@+id/macroCountdown2" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="1dp" android:gravity="center" android:text="—" android:textColor="#CDD8E4" android:textSize="8sp" android:textStyle="bold" />
     <TextView android:id="@+id/macroForecast2" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="1dp" android:gravity="center" android:text="Att. — · Préc. —" android:textColor="#8EA0B2" android:textSize="7sp" android:maxLines="1" android:ellipsize="end" />
