@@ -9,81 +9,38 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.time.LocalDate
-import java.time.ZoneOffset
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-data class KrakenPositionSnapshot(val symbol: String, val valueEur: Double, val dayChangeEur: Double, val dayChangePercent: Double)
-data class KrakenPortfolioSnapshot(val totalEur: Double, val dayChangeEur: Double, val dayChangePercent: Double, val balances: Map<String, Double>, val positions: List<KrakenPositionSnapshot>, val updatedAt: Long)
-private data class TickerSnapshot(val current: Double, val open: Double)
+data class KrakenPositionSnapshot(val symbol:String,val valueEur:Double,val dayChangeEur:Double,val dayChangePercent:Double)
+data class KrakenPortfolioSnapshot(val totalEur:Double,val dayChangeEur:Double,val dayChangePercent:Double,val balances:Map<String,Double>,val positions:List<KrakenPositionSnapshot>,val updatedAt:Long)
+private data class TickerSnapshot(val current:Double,val open:Double)
+private data class CostState(var qty:Double=0.0,var costEur:Double=0.0)
 
 object KrakenPortfolioRepository {
-    private const val PREFS = "kraken_portfolio_cache"
-    private const val BASE = "https://api.kraken.com"
-    private val cashLikeAssets = setOf("EUR", "USD", "GBP", "CHF", "CAD", "AUD", "JPY", "USDT", "USDC")
-
-    fun refresh(context: Context, timeframe: PortfolioTimeframe = PortfolioTimeframeStore.get(context)): KrakenPortfolioSnapshot {
-        val credentials = BrokerConnectionStore.krakenCredentials(context) ?: throw IllegalStateException("Identifiants Kraken absents")
-        val balances = fetchBalances(credentials).filterValues { kotlin.math.abs(it) > 0.00000001 }
-        var total = 0.0; var totalChange = 0.0
-        val positions = mutableListOf<KrakenPositionSnapshot>()
-        balances.forEach { (rawAsset, amount) ->
-            val symbol = normalizeAsset(rawAsset)
-            val currentTicker = eurTicker(rawAsset)
-            val current = currentTicker?.current ?: 0.0
-            val reference = if (timeframe == PortfolioTimeframe.SESSION) currentTicker?.open ?: current else historicalEurPrice(rawAsset, timeframe) ?: current
-            val value = amount * current
-            val change = amount * (current - reference)
-            val percent = if (reference > 0) (current / reference - 1.0) * 100.0 else 0.0
-            total += value; totalChange += change
-            if (symbol !in cashLikeAssets && current > 0 && value > 0.01) positions += KrakenPositionSnapshot(if (symbol == "XBT") "BTC" else symbol, value, change, percent)
-        }
-        val previous = total - totalChange
-        val snapshot = KrakenPortfolioSnapshot(total, totalChange, if (previous > 0) totalChange / previous * 100.0 else 0.0, balances, positions, System.currentTimeMillis())
-        cache(context, snapshot); BrokerConnectionStore.setKrakenVerified(context, true); return snapshot
-    }
-
-    private fun historicalEurPrice(rawAsset: String, timeframe: PortfolioTimeframe): Double? {
-        val asset = normalizeAsset(rawAsset)
-        if (asset == "EUR") return 1.0
-        val daysBack = when (timeframe) {
-            PortfolioTimeframe.MONTH -> 30L
-            PortfolioTimeframe.THREE_MONTHS -> 90L
-            PortfolioTimeframe.YEAR -> 365L
-            PortfolioTimeframe.YTD -> (LocalDate.now().toEpochDay() - LocalDate.now().withDayOfYear(1).toEpochDay()).coerceAtLeast(1)
-            PortfolioTimeframe.SESSION -> 1L
-        }
-        val since = LocalDate.now().minusDays(daysBack).atStartOfDay().toEpochSecond(ZoneOffset.UTC)
-        val pair = when (asset) { "XBT" -> "XBTEUR"; else -> "${asset}EUR" }
-        return ohlcOpen(pair, since) ?: if (asset == "USD") {
-            val eurUsd = ohlcOpen("EURUSD", since); eurUsd?.let { 1.0 / it }
-        } else null
-    }
-
-    private fun ohlcOpen(pair: String, since: Long): Double? = runCatching {
-        val url = "$BASE/0/public/OHLC?pair=${URLEncoder.encode(pair, "UTF-8")}&interval=1440&since=$since"
-        val c = (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout=8000; readTimeout=8000; setRequestProperty("User-Agent","MarketWidgets/1.0") }
-        if (c.responseCode !in 200..299) return@runCatching null
-        val result = JSONObject(c.inputStream.bufferedReader().use { it.readText() }).optJSONObject("result") ?: return@runCatching null
-        val key = result.keys().asSequence().firstOrNull { it != "last" } ?: return@runCatching null
-        val rows = result.optJSONArray(key) ?: return@runCatching null
-        var best: JSONArray? = null
-        for (i in 0 until rows.length()) { val row=rows.optJSONArray(i) ?: continue; if (row.optLong(0) >= since) { best=row; break } }
-        best?.optString(1)?.toDoubleOrNull()
-    }.getOrNull()
-
-    fun cached(context: Context): KrakenPortfolioSnapshot? {
-        val prefs=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE); val raw=prefs.getString("balances",null)?:return null
-        val obj=runCatching{JSONObject(raw)}.getOrNull()?:return null; val balances=mutableMapOf<String,Double>(); obj.keys().forEach{balances[it]=obj.optDouble(it,0.0)}
-        val positions=mutableListOf<KrakenPositionSnapshot>(); prefs.getString("positions",null)?.let { runCatching{JSONArray(it)}.getOrNull()?.let{a->for(i in 0 until a.length()){val p=a.optJSONObject(i)?:continue;positions+=KrakenPositionSnapshot(p.optString("symbol"),p.optDouble("valueEur"),p.optDouble("dayChangeEur"),p.optDouble("dayChangePercent"))}}}
-        return KrakenPortfolioSnapshot(java.lang.Double.longBitsToDouble(prefs.getLong("total",0)),java.lang.Double.longBitsToDouble(prefs.getLong("dayChange",0)),java.lang.Double.longBitsToDouble(prefs.getLong("dayPercent",0)),balances,positions,prefs.getLong("updated",0))
-    }
-    fun clear(context:Context){context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply()}
-    private fun cache(context:Context,s:KrakenPortfolioSnapshot){val b=JSONObject();s.balances.forEach{(k,v)->b.put(k,v)};val p=JSONArray();s.positions.forEach{p.put(JSONObject().put("symbol",it.symbol).put("valueEur",it.valueEur).put("dayChangeEur",it.dayChangeEur).put("dayChangePercent",it.dayChangePercent))};context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putLong("total",java.lang.Double.doubleToRawLongBits(s.totalEur)).putLong("dayChange",java.lang.Double.doubleToRawLongBits(s.dayChangeEur)).putLong("dayPercent",java.lang.Double.doubleToRawLongBits(s.dayChangePercent)).putString("balances",b.toString()).putString("positions",p.toString()).putLong("updated",s.updatedAt).apply()}
-    private fun fetchBalances(c:BrokerConnectionStore.KrakenCredentials):Map<String,Double>{val path="/0/private/Balance";val nonce=System.currentTimeMillis().toString();val data="nonce="+URLEncoder.encode(nonce,"UTF-8");val con=(URL(BASE+path).openConnection() as HttpURLConnection).apply{requestMethod="POST";connectTimeout=12000;readTimeout=12000;doOutput=true;setRequestProperty("API-Key",c.apiKey);setRequestProperty("API-Sign",sign(path,nonce,data,c.apiSecret));setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");setRequestProperty("User-Agent","MarketWidgets/1.0")};con.outputStream.use{it.write(data.toByteArray(StandardCharsets.UTF_8))};val body=(if(con.responseCode in 200..299)con.inputStream else con.errorStream).bufferedReader().use{it.readText()};val j=JSONObject(body);val e=j.optJSONArray("error");if(e!=null&&e.length()>0)throw IllegalStateException(e.optString(0,"Erreur Kraken"));val r=j.optJSONObject("result")?:throw IllegalStateException("Réponse Kraken invalide");val out=linkedMapOf<String,Double>();r.keys().forEach{val v=r.optString(it).toDoubleOrNull()?:0.0;if(v!=0.0)out[it]=v};return out}
-    private fun sign(path:String,nonce:String,data:String,secret:String):String{val hash=MessageDigest.getInstance("SHA-256").digest((nonce+data).toByteArray(StandardCharsets.UTF_8));val mac=Mac.getInstance("HmacSHA512");mac.init(SecretKeySpec(Base64.decode(secret,Base64.DEFAULT),"HmacSHA512"));return Base64.encodeToString(mac.doFinal(path.toByteArray(StandardCharsets.UTF_8)+hash),Base64.NO_WRAP)}
-    private fun eurTicker(raw:String):TickerSnapshot?{val a=normalizeAsset(raw);if(a=="EUR")return TickerSnapshot(1.0,1.0);val pairs=when(a){"XBT"->listOf("XBTEUR" to false,"XXBTZEUR" to false);"USD"->listOf("EURUSD" to true);"USDT"->listOf("USDTEUR" to false);"USDC"->listOf("USDCEUR" to false);else->listOf("${a}EUR" to false)};for((pair,inv)in pairs){val t=fetchTicker(pair)?:continue;if(t.current>0&&t.open>0)return if(inv)TickerSnapshot(1/t.current,1/t.open)else t};return null}
-    private fun fetchTicker(pair:String):TickerSnapshot?=runCatching{val c=(URL("$BASE/0/public/Ticker?pair=${URLEncoder.encode(pair,"UTF-8")}").openConnection() as HttpURLConnection).apply{connectTimeout=8000;readTimeout=8000;setRequestProperty("User-Agent","MarketWidgets/1.0")};if(c.responseCode !in 200..299)return@runCatching null;val r=JSONObject(c.inputStream.bufferedReader().use{it.readText()}).optJSONObject("result")?:return@runCatching null;val k=r.keys().asSequence().firstOrNull()?:return@runCatching null;val t=r.optJSONObject(k)?:return@runCatching null;val current=t.optJSONArray("c")?.optString(0)?.toDoubleOrNull()?:return@runCatching null;TickerSnapshot(current,t.optString("o").toDoubleOrNull()?:current)}.getOrNull()
-    private fun normalizeAsset(raw:String):String{val a=raw.substringBefore('.');return when(a){"ZEUR"->"EUR";"ZUSD"->"USD";"XXBT"->"XBT";"XETH"->"ETH";else->a.removePrefix("X").removePrefix("Z")}}
+ private const val PREFS="kraken_portfolio_cache"; private const val BASE="https://api.kraken.com"; private val cashLike=setOf("EUR","USD","GBP","CHF","CAD","AUD","JPY","USDT","USDC")
+ fun refresh(context:Context,timeframe:PortfolioTimeframe=PortfolioTimeframeStore.get(context)):KrakenPortfolioSnapshot{
+  val c=BrokerConnectionStore.krakenCredentials(context)?:error("Identifiants Kraken absents");val balances=fetchBalances(c).filterValues{kotlin.math.abs(it)>1e-8};val costs=fetchCostBasis(c)
+  var total=0.0;var pnl=0.0;var invested=0.0;val positions=mutableListOf<KrakenPositionSnapshot>()
+  balances.forEach{(raw,amount)->val symbol=normalizeAsset(raw);val ticker=eurTicker(raw);val current=ticker?.current?:0.0;val value=amount*current;total+=value
+   if(symbol !in cashLike&&current>0&&value>0.01){val state=costs[symbol];val cost=state?.takeIf{it.qty>1e-10&&it.costEur>0}?.let{it.costEur*(amount/it.qty).coerceAtLeast(0.0)};if(cost!=null&&cost>0){val change=value-cost;val pct=change/cost*100;pnl+=change;invested+=cost;positions+=KrakenPositionSnapshot(if(symbol=="XBT")"BTC" else symbol,value,change,pct)}}
+  }
+  val snapshot=KrakenPortfolioSnapshot(total,pnl,if(invested>0)pnl/invested*100 else 0.0,balances,positions,System.currentTimeMillis());cache(context,snapshot);BrokerConnectionStore.setKrakenVerified(context,true);return snapshot
+ }
+ private fun fetchCostBasis(c:BrokerConnectionStore.KrakenCredentials):Map<String,CostState>{val trades=mutableListOf<JSONObject>();var ofs=0;var count=Int.MAX_VALUE
+  while(ofs<count&&ofs<10000){val r=privatePost(c,"/0/private/TradesHistory",mapOf("ofs" to ofs.toString()));val result=r.getJSONObject("result");count=result.optInt("count",0);val obj=result.optJSONObject("trades")?:break;obj.keys().forEach{trades+=obj.getJSONObject(it)};if(obj.length()==0)break;ofs+=obj.length()}
+  val states=mutableMapOf<String,CostState>();trades.sortedBy{it.optDouble("time")}.forEach{t->val type=t.optString("type");val pair=t.optString("pair");val asset=baseAsset(pair);val vol=t.optString("vol").toDoubleOrNull()?:return@forEach;val cost=t.optString("cost").toDoubleOrNull()?:return@forEach;val fee=t.optString("fee").toDoubleOrNull()?:0.0;val quote=quoteAsset(pair);val fx=quoteToEur(quote);val s=states.getOrPut(asset){CostState()};if(type=="buy"){s.qty+=vol;s.costEur+=(cost+fee)*fx}else if(type=="sell"&&s.qty>0){val sold=vol.coerceAtMost(s.qty);val avg=s.costEur/s.qty;s.costEur=(s.costEur-avg*sold).coerceAtLeast(0.0);s.qty=(s.qty-sold).coerceAtLeast(0.0)}};return states
+ }
+ private fun baseAsset(pair:String):String{val p=pair.uppercase().replace("XXBT","XBT").replace("XETH","ETH");val quotes=listOf("ZEUR","ZUSD","EUR","USD","USDT","USDC","GBP","BTC","XBT");val q=quotes.firstOrNull{p.endsWith(it)};var b=if(q!=null)p.dropLast(q.length)else p;b=b.removePrefix("X").removePrefix("Z");return if(b=="BTC")"XBT" else b}
+ private fun quoteAsset(pair:String):String{val p=pair.uppercase();return when{p.endsWith("ZEUR")||p.endsWith("EUR")->"EUR";p.endsWith("ZUSD")||p.endsWith("USD")->"USD";p.endsWith("USDT")->"USDT";p.endsWith("USDC")->"USDC";else->"EUR"}}
+ private fun quoteToEur(q:String):Double=when(q){"EUR"->1.0;"USD"->eurTicker("ZUSD")?.current?:1.0;"USDT"->eurTicker("USDT")?.current?:1.0;"USDC"->eurTicker("USDC")?.current?:1.0;else->1.0}
+ fun cached(context:Context):KrakenPortfolioSnapshot?{val p=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE);val raw=p.getString("balances",null)?:return null;val o=runCatching{JSONObject(raw)}.getOrNull()?:return null;val b=mutableMapOf<String,Double>();o.keys().forEach{b[it]=o.optDouble(it)};val pos=mutableListOf<KrakenPositionSnapshot>();p.getString("positions",null)?.let{runCatching{JSONArray(it)}.getOrNull()?.let{a->for(i in 0 until a.length()){val x=a.optJSONObject(i)?:continue;pos+=KrakenPositionSnapshot(x.optString("symbol"),x.optDouble("valueEur"),x.optDouble("dayChangeEur"),x.optDouble("dayChangePercent"))}}};return KrakenPortfolioSnapshot(Double.fromBits(p.getLong("total",0)),Double.fromBits(p.getLong("dayChange",0)),Double.fromBits(p.getLong("dayPercent",0)),b,pos,p.getLong("updated",0))}
+ fun clear(context:Context){context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply()}
+ private fun cache(context:Context,s:KrakenPortfolioSnapshot){val b=JSONObject();s.balances.forEach{(k,v)->b.put(k,v)};val a=JSONArray();s.positions.forEach{a.put(JSONObject().put("symbol",it.symbol).put("valueEur",it.valueEur).put("dayChangeEur",it.dayChangeEur).put("dayChangePercent",it.dayChangePercent))};context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putLong("total",s.totalEur.toBits()).putLong("dayChange",s.dayChangeEur.toBits()).putLong("dayPercent",s.dayChangePercent.toBits()).putString("balances",b.toString()).putString("positions",a.toString()).putLong("updated",s.updatedAt).apply()}
+ private fun fetchBalances(c:BrokerConnectionStore.KrakenCredentials):Map<String,Double>{val r=privatePost(c,"/0/private/Balance",emptyMap());val x=r.getJSONObject("result");val out=linkedMapOf<String,Double>();x.keys().forEach{val v=x.optString(it).toDoubleOrNull()?:0.0;if(v!=0.0)out[it]=v};return out}
+ private fun privatePost(c:BrokerConnectionStore.KrakenCredentials,path:String,params:Map<String,String>):JSONObject{val nonce=System.currentTimeMillis().toString();val data=(listOf("nonce="+URLEncoder.encode(nonce,"UTF-8"))+params.map{URLEncoder.encode(it.key,"UTF-8")+"="+URLEncoder.encode(it.value,"UTF-8")}).joinToString("&");val con=(URL(BASE+path).openConnection() as HttpURLConnection).apply{requestMethod="POST";connectTimeout=12000;readTimeout=12000;doOutput=true;setRequestProperty("API-Key",c.apiKey);setRequestProperty("API-Sign",sign(path,nonce,data,c.apiSecret));setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");setRequestProperty("User-Agent","MarketWidgets/2.1")};return try{con.outputStream.use{it.write(data.toByteArray(StandardCharsets.UTF_8))};val body=(if(con.responseCode in 200..299)con.inputStream else con.errorStream).bufferedReader().use{it.readText()};val j=JSONObject(body);val e=j.optJSONArray("error");if(e!=null&&e.length()>0)error(e.optString(0,"Erreur Kraken"));j}finally{con.disconnect()}}
+ private fun sign(path:String,nonce:String,data:String,secret:String):String{val hash=MessageDigest.getInstance("SHA-256").digest((nonce+data).toByteArray());val mac=Mac.getInstance("HmacSHA512");mac.init(SecretKeySpec(Base64.decode(secret,Base64.DEFAULT),"HmacSHA512"));return Base64.encodeToString(mac.doFinal(path.toByteArray()+hash),Base64.NO_WRAP)}
+ private fun eurTicker(raw:String):TickerSnapshot?{val a=normalizeAsset(raw);if(a=="EUR")return TickerSnapshot(1.0,1.0);val pairs=when(a){"XBT"->listOf("XBTEUR" to false,"XXBTZEUR" to false);"USD"->listOf("EURUSD" to true);"USDT"->listOf("USDTEUR" to false);"USDC"->listOf("USDCEUR" to false);else->listOf("${a}EUR" to false)};for((pair,inv)in pairs){val t=fetchTicker(pair)?:continue;if(t.current>0)return if(inv)TickerSnapshot(1/t.current,1/t.open)else t};return null}
+ private fun fetchTicker(pair:String):TickerSnapshot?=runCatching{val c=URL("$BASE/0/public/Ticker?pair=${URLEncoder.encode(pair,"UTF-8")}").openConnection() as HttpURLConnection;c.connectTimeout=8000;c.readTimeout=8000;val r=JSONObject(c.inputStream.bufferedReader().use{it.readText()}).getJSONObject("result");val t=r.getJSONObject(r.keys().next());val cur=t.getJSONArray("c").getString(0).toDouble();TickerSnapshot(cur,t.optString("o").toDoubleOrNull()?:cur)}.getOrNull()
+ private fun normalizeAsset(raw:String):String{val a=raw.substringBefore('.');return when(a){"ZEUR"->"EUR";"ZUSD"->"USD";"XXBT"->"XBT";"XETH"->"ETH";else->a.removePrefix("X").removePrefix("Z")}}
 }
