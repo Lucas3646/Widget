@@ -5,7 +5,11 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.widget.RemoteViews
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -67,6 +71,11 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
                 ibkr?.positions?.forEach { add(PortfolioDisplayPosition(it.symbol, it.valueEur, it.periodChangePercent)) }
             }
             val hasSnapshot = kraken != null || ibkr != null
+            val chartValues = when {
+                ibkr?.chartValues?.isNotEmpty() == true -> ibkr.chartValues.map { it + (kraken?.totalEur ?: 0.0) }
+                hasSnapshot -> listOf((total - change).coerceAtLeast(0.0), total)
+                else -> emptyList()
+            }
 
             ids.forEach { id ->
                 val views = RemoteViews(context.packageName, R.layout.widget_portfolio)
@@ -77,11 +86,13 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
                     val color = Color.parseColor(if (change >= 0) GREEN else RED)
                     views.setTextColor(R.id.portfolioDayChange, color)
                     views.setTextColor(R.id.portfolioDayPercent, color)
+                    views.setImageViewBitmap(R.id.portfolioChart, sparkline(chartValues, change >= 0))
                     fillRanking(views, listOf(R.id.portfolioTop1, R.id.portfolioTop2, R.id.portfolioTop3), positions.sortedByDescending { it.changePercent }.take(3), eur0)
                     fillRanking(views, listOf(R.id.portfolioFlop1, R.id.portfolioFlop2, R.id.portfolioFlop3), positions.sortedBy { it.changePercent }.take(3), eur0)
                 } else {
                     views.setTextViewText(R.id.portfolioDayChange, "— €")
                     views.setTextViewText(R.id.portfolioDayPercent, "— % · ${timeframe.label}")
+                    views.setImageViewBitmap(R.id.portfolioChart, sparkline(emptyList(), true))
                     listOf(R.id.portfolioTop1, R.id.portfolioTop2, R.id.portfolioTop3, R.id.portfolioFlop1, R.id.portfolioFlop2, R.id.portfolioFlop3).forEach { views.setTextViewText(it, "—") }
                 }
 
@@ -101,6 +112,7 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
                 views.setOnClickPendingIntent(R.id.portfolioTotal, timeframePending)
                 views.setOnClickPendingIntent(R.id.portfolioDayChange, timeframePending)
                 views.setOnClickPendingIntent(R.id.portfolioDayPercent, timeframePending)
+                views.setOnClickPendingIntent(R.id.portfolioChart, timeframePending)
 
                 val brokerIntent = Intent(context, BrokerConnectionsActivity::class.java)
                 val brokerPending = PendingIntent.getActivity(context, id, brokerIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -108,6 +120,32 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
                 views.setOnClickPendingIntent(R.id.portfolioKraken, brokerPending)
                 manager.updateAppWidget(id, views)
             }
+        }
+
+        private fun sparkline(values: List<Double>, positive: Boolean): Bitmap {
+            val width = 560
+            val height = 86
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            if (values.size < 2) return bitmap
+            val min = values.minOrNull() ?: return bitmap
+            val max = values.maxOrNull() ?: return bitmap
+            val range = (max - min).takeIf { it > 0.0001 } ?: 1.0
+            val pad = 6f
+            val path = Path()
+            values.forEachIndexed { index, value ->
+                val x = pad + (width - pad * 2) * index.toFloat() / (values.size - 1).coerceAtLeast(1)
+                val y = pad + (height - pad * 2) * (1f - ((value - min) / range).toFloat())
+                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor(if (positive) GREEN else RED)
+                style = Paint.Style.STROKE
+                strokeWidth = 5f
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+            Canvas(bitmap).drawPath(path, paint)
+            return bitmap
         }
 
         private fun fillRanking(views: RemoteViews, ids: List<Int>, positions: List<PortfolioDisplayPosition>, eur0: NumberFormat) {
