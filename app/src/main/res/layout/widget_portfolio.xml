@@ -6,10 +6,45 @@
     android:padding="16dp"
     android:background="@drawable/widget_background">
 
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PATRIMOINE" android:textColor="#38F27A" android:textStyle="bold" android:textSize="12sp" />
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Portfolio" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="28sp" />
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="IBKR + Kraken" android:textColor="#38F27A" android:textStyle="bold" android:textSize="14sp" />
-    <Space android:layout_width="1dp" android:layout_height="0dp" android:layout_weight="1" />
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="IBKR · données à connecter" android:textColor="#FFFFFF" android:textSize="13sp" />
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="Kraken · données à connecter" android:textColor="#8EA0B2" android:textSize="13sp" />
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="PATRIMOINE"
+        android:textColor="#38F27A"
+        android:textStyle="bold"
+        android:textSize="12sp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Portfolio"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:textSize="28sp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="IBKR + Kraken"
+        android:textColor="#38F27A"
+        android:textStyle="bold"
+        android:textSize="14sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="IBKR · données à connecter"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Kraken · données à connecter"
+        android:textColor="#8EA0B2"
+        android:textSize="13sp" />
 </LinearLayout>
