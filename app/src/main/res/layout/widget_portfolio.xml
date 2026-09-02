@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="14dp"
+    android:padding="13dp"
     android:background="@drawable/widget_background">
 
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -16,27 +16,35 @@
             <TextView android:id="@+id/portfolioDayChange" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="— €" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="12sp" />
             <TextView android:id="@+id/portfolioDayPercent" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="— % aujourd’hui" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="12sp" />
+                android:text="— %" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="12sp" />
         </LinearLayout>
     </LinearLayout>
 
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp">
+    <ImageView
+        android:id="@+id/portfolioChart"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="2dp"
+        android:scaleType="fitXY"
+        android:contentDescription="Évolution du portefeuille" />
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp">
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TOP 3" android:textColor="#38F27A" android:textStyle="bold" android:textSize="10sp" />
-            <TextView android:id="@+id/portfolioTop1" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="11sp" />
-            <TextView android:id="@+id/portfolioTop2" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="11sp" />
-            <TextView android:id="@+id/portfolioTop3" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="11sp" />
+            <TextView android:id="@+id/portfolioTop1" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="10sp" />
+            <TextView android:id="@+id/portfolioTop2" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="10sp" />
+            <TextView android:id="@+id/portfolioTop3" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="10sp" />
         </LinearLayout>
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="FLOP 3" android:textColor="#FF6B6B" android:textStyle="bold" android:textSize="10sp" />
-            <TextView android:id="@+id/portfolioFlop1" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="11sp" />
-            <TextView android:id="@+id/portfolioFlop2" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="11sp" />
-            <TextView android:id="@+id/portfolioFlop3" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="11sp" />
+            <TextView android:id="@+id/portfolioFlop1" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="10sp" />
+            <TextView android:id="@+id/portfolioFlop2" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="10sp" />
+            <TextView android:id="@+id/portfolioFlop3" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="—" android:textColor="#FFFFFF" android:textSize="10sp" />
         </LinearLayout>
     </LinearLayout>
 
     <TextView android:id="@+id/portfolioIbkr" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="7dp" android:text="IBKR · à connecter" android:textColor="#8EA0B2" android:textSize="10sp" />
+        android:layout_marginTop="4dp" android:text="IBKR · à connecter" android:textColor="#8EA0B2" android:textSize="9sp" />
     <TextView android:id="@+id/portfolioKraken" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Kraken · à connecter" android:textColor="#8EA0B2" android:textSize="10sp" />
+        android:text="Kraken · à connecter" android:textColor="#8EA0B2" android:textSize="9sp" />
 </LinearLayout>
