@@ -44,6 +44,7 @@ class MvrvWidgetProvider : AppWidgetProvider() {
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_mvrv)
             val snapshot = MvrvRepository.cached(context)
+            val lastError = MvrvRepository.lastError(context)
             val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
             val zFormat = DecimalFormat("0.00", symbols)
             val priceFormat = DecimalFormat("#,##0", symbols)
@@ -51,8 +52,13 @@ class MvrvWidgetProvider : AppWidgetProvider() {
 
             if (snapshot == null) {
                 views.setTextViewText(R.id.mvrvWidgetValue, "Z --")
-                views.setTextViewText(R.id.mvrvWidgetZone, "Chargement…")
-                views.setTextViewText(R.id.mvrvWidgetDistance, "Toucher pour actualiser")
+                if (lastError == null) {
+                    views.setTextViewText(R.id.mvrvWidgetZone, "Chargement…")
+                    views.setTextViewText(R.id.mvrvWidgetDistance, "Toucher pour actualiser")
+                } else {
+                    views.setTextViewText(R.id.mvrvWidgetZone, "Source indisponible")
+                    views.setTextViewText(R.id.mvrvWidgetDistance, "Toucher pour réessayer")
+                }
                 views.setTextColor(R.id.mvrvWidgetValue, Color.rgb(142, 160, 178))
             } else {
                 val zone = MvrvRepository.zoneLabel(snapshot.zScore)
