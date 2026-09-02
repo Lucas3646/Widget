@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
+    android:padding="14dp"
     android:background="@drawable/widget_background">
 
     <TextView
@@ -13,43 +13,85 @@
         android:text="DIVIDENDES · IBKR"
         android:textColor="#38F27A"
         android:textStyle="bold"
-        android:textSize="12sp" />
+        android:textSize="11sp" />
 
-    <TextView
-        android:id="@+id/dividendSymbol"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="IBKR"
-        android:textColor="#FFFFFF"
-        android:textStyle="bold"
-        android:textSize="22sp" />
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/dividendSymbol"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="—"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:textSize="22sp" />
+
+        <TextView
+            android:id="@+id/dividendCountdown"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="J—"
+            android:textColor="#38F27A"
+            android:textStyle="bold"
+            android:textSize="16sp" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/dividendAmount"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="Connexion requise"
-        android:textColor="#8EA0B2"
-        android:textSize="14sp" />
+        android:layout_marginTop="1dp"
+        android:text="— €"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:textSize="16sp" />
 
     <TextView
         android:id="@+id/dividendDate"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Ouvre Market Widgets"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp" />
+        android:layout_marginTop="2dp"
+        android:text="Prochain : —"
+        android:textColor="#8EA0B2"
+        android:textSize="11sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="REÇU YTD" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="9sp" />
+            <TextView android:id="@+id/dividendReceivedYtd" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="— €" android:textColor="#38F27A" android:textStyle="bold" android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="RESTANT 31/12" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="9sp" />
+            <TextView android:id="@+id/dividendRemaining" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="— €" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="13sp" />
+        </LinearLayout>
+    </LinearLayout>
 
     <TextView
         android:id="@+id/dividendDescription"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="6dp"
         android:text=""
         android:textColor="#8EA0B2"
-        android:textSize="11sp"
+        android:textSize="9sp"
         android:maxLines="2" />
 </LinearLayout>
