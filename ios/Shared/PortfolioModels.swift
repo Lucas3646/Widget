@@ -28,8 +28,8 @@ struct PortfolioSnapshot: Codable, Hashable {
         return previous == 0 ? 0 : dayChangeEUR / previous * 100
     }
     var rankedPositions: [PortfolioPositionSnapshot] { positions }
-    var top3: [PortfolioPositionSnapshot] { Array(rankedPositions.sorted { $0.dayChangePercent > $1.dayChangePercent }.prefix(3)) }
-    var flop3: [PortfolioPositionSnapshot] { Array(rankedPositions.sorted { $0.dayChangePercent < $1.dayChangePercent }.prefix(3)) }
+    var top3: [PortfolioPositionSnapshot] { Array(rankedPositions.filter { $0.dayChangePercent > 0.0001 }.sorted { $0.dayChangePercent > $1.dayChangePercent }.prefix(3)) }
+    var flop3: [PortfolioPositionSnapshot] { Array(rankedPositions.filter { $0.dayChangePercent < -0.0001 }.sorted { $0.dayChangePercent < $1.dayChangePercent }.prefix(3)) }
     static let preview = PortfolioSnapshot(accounts:[BrokerAccountSnapshot(broker:.ibkr,valueEUR:13420,dayChangeEUR:107.36,dayChangePercent:0.81),BrokerAccountSnapshot(broker:.kraken,valueEUR:5222,dayChangeEUR:620,dayChangePercent:13.5)],positions:[PortfolioPositionSnapshot(broker:.kraken,symbol:"BTC",valueEUR:4200,dayChangePercent:18.2),PortfolioPositionSnapshot(broker:.ibkr,symbol:"NVDA",valueEUR:3850,dayChangePercent:4.21),PortfolioPositionSnapshot(broker:.ibkr,symbol:"TSLA",valueEUR:1540,dayChangePercent:-2.14)],chartValues:[17850,17920,18040,18410,18642],updatedAt:Date())
 }
 
