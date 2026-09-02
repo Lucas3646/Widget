@@ -1,5 +1,11 @@
 <resources>
     <string name="app_name">Market Widgets</string>
+    <string name="widget_name_market">Cours marché</string>
+    <string name="widget_name_alerts">Alertes marché</string>
+    <string name="widget_name_mvrv">BTC MVRV Z-Score</string>
+    <string name="widget_name_drawdown">ATH Drawdown</string>
+    <string name="widget_name_portfolio">Portfolio · IBKR + Kraken</string>
+    <string name="widget_name_dividend">Dividendes · IBKR</string>
     <string name="widget_description">Cours &amp; graphique d’un actif 2×2</string>
     <string name="alert_widget_description">Alertes marché 4×2</string>
     <string name="mvrv_widget_description">BTC MVRV Z-Score 4×1</string>
