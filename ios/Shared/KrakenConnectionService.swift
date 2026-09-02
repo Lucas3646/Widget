@@ -2,184 +2,36 @@ import Foundation
 import CryptoKit
 import Security
 
-struct KrakenIOSPosition: Codable, Hashable {
-    let symbol: String
-    let valueEUR: Double
-    let dayChangeEUR: Double
-    let dayChangePercent: Double
+struct KrakenIOSPosition:Codable,Hashable{let symbol:String;let valueEUR:Double;let dayChangeEUR:Double;let dayChangePercent:Double}
+struct KrakenIOSSnapshot:Codable,Hashable{let totalEUR:Double;let dayChangeEUR:Double;let dayChangePercent:Double;let balances:[String:Double];let positions:[KrakenIOSPosition];let updatedAt:Date}
+private struct KrakenTickerSnapshot{let current:Double;let open:Double}
+private struct CostState{var qty=0.0;var costEUR=0.0}
+
+enum KrakenKeychainStore{
+ private static let service="com.lucas.marketwidgets.kraken"
+ static func save(apiKey:String,apiSecret:String)throws{try saveValue(apiKey,account:"apiKey");try saveValue(apiSecret,account:"apiSecret")}
+ static func credentials()->(String,String)?{guard let k=value(account:"apiKey"),let s=value(account:"apiSecret")else{return nil};return(k,s)}
+ static func clear(){["apiKey","apiSecret"].forEach{SecItemDelete([kSecClass:kSecClassGenericPassword,kSecAttrService:service,kSecAttrAccount:$0] as CFDictionary)}}
+ private static func saveValue(_ value:String,account:String)throws{let data=Data(value.utf8);let q:[CFString:Any]=[kSecClass:kSecClassGenericPassword,kSecAttrService:service,kSecAttrAccount:account];SecItemDelete(q as CFDictionary);var i=q;i[kSecValueData]=data;let s=SecItemAdd(i as CFDictionary,nil);guard s==errSecSuccess else{throw NSError(domain:NSOSStatusErrorDomain,code:Int(s))}}
+ private static func value(account:String)->String?{let q:[CFString:Any]=[kSecClass:kSecClassGenericPassword,kSecAttrService:service,kSecAttrAccount:account,kSecReturnData:true,kSecMatchLimit:kSecMatchLimitOne];var item:CFTypeRef?;guard SecItemCopyMatching(q as CFDictionary,&item)==errSecSuccess,let d=item as? Data else{return nil};return String(data:d,encoding:.utf8)}
 }
 
-struct KrakenIOSSnapshot: Codable, Hashable {
-    let totalEUR: Double
-    let dayChangeEUR: Double
-    let dayChangePercent: Double
-    let balances: [String: Double]
-    let positions: [KrakenIOSPosition]
-    let updatedAt: Date
-}
-
-private struct KrakenTickerSnapshot {
-    let current: Double
-    let open: Double
-}
-
-enum KrakenKeychainStore {
-    private static let service = "com.lucas.marketwidgets.kraken"
-
-    static func save(apiKey: String, apiSecret: String) throws {
-        try saveValue(apiKey, account: "apiKey")
-        try saveValue(apiSecret, account: "apiSecret")
-    }
-
-    static func credentials() -> (String, String)? {
-        guard let key = value(account: "apiKey"), let secret = value(account: "apiSecret") else { return nil }
-        return (key, secret)
-    }
-
-    static func clear() {
-        ["apiKey", "apiSecret"].forEach { account in
-            SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account] as CFDictionary)
-        }
-    }
-
-    private static func saveValue(_ value: String, account: String) throws {
-        let data = Data(value.utf8)
-        let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account]
-        SecItemDelete(query as CFDictionary)
-        var insert = query
-        insert[kSecValueData] = data
-        let status = SecItemAdd(insert as CFDictionary, nil)
-        guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
-    }
-
-    private static func value(account: String) -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-}
-
-enum KrakenConnectionService {
-    private static let base = URL(string: "https://api.kraken.com")!
-    private static let cashLike: Set<String> = ["EUR", "USD", "GBP", "CHF", "CAD", "AUD", "JPY", "USDT", "USDC"]
-
-    static func refresh() async throws -> KrakenIOSSnapshot {
-        guard let (apiKey, secret) = KrakenKeychainStore.credentials() else {
-            throw NSError(domain: "Kraken", code: 1, userInfo: [NSLocalizedDescriptionKey: "Identifiants Kraken absents"])
-        }
-        let balances = try await balance(apiKey: apiKey, secret: secret).filter { abs($0.value) > 0.00000001 }
-        var total = 0.0
-        var totalDayChange = 0.0
-        var positions: [KrakenIOSPosition] = []
-
-        for (rawAsset, amount) in balances {
-            let symbol = normalize(rawAsset)
-            guard let ticker = try? await eurTicker(asset: rawAsset) else { continue }
-            let value = amount * ticker.current
-            let dayChange = amount * (ticker.current - ticker.open)
-            let dayPercent = ticker.open > 0 ? (ticker.current / ticker.open - 1) * 100 : 0
-            total += value
-            totalDayChange += dayChange
-
-            if !cashLike.contains(symbol), ticker.current > 0, value > 0.01 {
-                positions.append(
-                    KrakenIOSPosition(
-                        symbol: symbol == "XBT" ? "BTC" : symbol,
-                        valueEUR: value,
-                        dayChangeEUR: dayChange,
-                        dayChangePercent: dayPercent
-                    )
-                )
-            }
-        }
-
-        let previous = total - totalDayChange
-        let totalDayPercent = previous > 0 ? totalDayChange / previous * 100 : 0
-        return KrakenIOSSnapshot(
-            totalEUR: total,
-            dayChangeEUR: totalDayChange,
-            dayChangePercent: totalDayPercent,
-            balances: balances,
-            positions: positions,
-            updatedAt: Date()
-        )
-    }
-
-    private static func balance(apiKey: String, secret: String) async throws -> [String: Double] {
-        let path = "/0/private/Balance"
-        let nonce = String(Int(Date().timeIntervalSince1970 * 1000))
-        let postData = "nonce=\(nonce)"
-        let signature = try sign(path: path, nonce: nonce, postData: postData, secret: secret)
-        var request = URLRequest(url: base.appendingPathComponent(path))
-        request.httpMethod = "POST"
-        request.httpBody = Data(postData.utf8)
-        request.setValue(apiKey, forHTTPHeaderField: "API-Key")
-        request.setValue(signature, forHTTPHeaderField: "API-Sign")
-        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode ?? 500 < 300 else { throw URLError(.badServerResponse) }
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        if let errors = json?["error"] as? [String], let first = errors.first, !first.isEmpty {
-            throw NSError(domain: "Kraken", code: 2, userInfo: [NSLocalizedDescriptionKey: first])
-        }
-        guard let result = json?["result"] as? [String: String] else { throw URLError(.cannotParseResponse) }
-        return result.compactMapValues(Double.init)
-    }
-
-    private static func sign(path: String, nonce: String, postData: String, secret: String) throws -> String {
-        guard let secretData = Data(base64Encoded: secret) else { throw URLError(.userAuthenticationRequired) }
-        let digest = SHA256.hash(data: Data((nonce + postData).utf8))
-        var message = Data(path.utf8)
-        message.append(contentsOf: digest)
-        let key = SymmetricKey(data: secretData)
-        let code = HMAC<SHA512>.authenticationCode(for: message, using: key)
-        return Data(code).base64EncodedString()
-    }
-
-    private static func eurTicker(asset raw: String) async throws -> KrakenTickerSnapshot {
-        let asset = normalize(raw)
-        if asset == "EUR" { return KrakenTickerSnapshot(current: 1, open: 1) }
-        let candidates: [(String, Bool)] = asset == "XBT" ? [("XBTEUR", false), ("XXBTZEUR", false)] :
-            asset == "USD" ? [("EURUSD", true)] :
-            asset == "USDT" ? [("USDTEUR", false)] :
-            asset == "USDC" ? [("USDCEUR", false)] : [("\(asset)EUR", false)]
-        for (pair, inverse) in candidates {
-            if let t = try? await ticker(pair: pair), t.current > 0, t.open > 0 {
-                return inverse ? KrakenTickerSnapshot(current: 1 / t.current, open: 1 / t.open) : t
-            }
-        }
-        throw URLError(.cannotParseResponse)
-    }
-
-    private static func ticker(pair: String) async throws -> KrakenTickerSnapshot {
-        var components = URLComponents(url: base.appendingPathComponent("/0/public/Ticker"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "pair", value: pair)]
-        let (data, _) = try await URLSession.shared.data(from: components.url!)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let result = json?["result"] as? [String: Any],
-              let first = result.values.first as? [String: Any],
-              let close = first["c"] as? [String],
-              let current = close.first.flatMap(Double.init) else { throw URLError(.cannotParseResponse) }
-        let open = (first["o"] as? String).flatMap(Double.init) ?? current
-        return KrakenTickerSnapshot(current: current, open: open)
-    }
-
-    private static func normalize(_ raw: String) -> String {
-        let base = raw.split(separator: ".").first.map(String.init) ?? raw
-        switch base {
-        case "ZEUR": return "EUR"
-        case "ZUSD": return "USD"
-        case "XXBT": return "XBT"
-        case "XETH": return "ETH"
-        default: return String(base.drop(while: { $0 == "X" || $0 == "Z" }))
-        }
-    }
+enum KrakenConnectionService{
+ private static let base=URL(string:"https://api.kraken.com")!;private static let cashLike:Set<String>=["EUR","USD","GBP","CHF","CAD","AUD","JPY","USDT","USDC"]
+ static func refresh()async throws->KrakenIOSSnapshot{guard let(k,s)=KrakenKeychainStore.credentials()else{throw URLError(.userAuthenticationRequired)};let balances=try await balance(apiKey:k,secret:s).filter{abs($0.value)>0.00000001};let costs=try await costBasis(apiKey:k,secret:s);var total=0.0;var pnl=0.0;var invested=0.0;var positions:[KrakenIOSPosition]=[]
+  for(raw,amount)in balances{let symbol=normalize(raw);guard let ticker=try? await eurTicker(asset:raw)else{continue};let value=amount*ticker.current;total+=value;if !cashLike.contains(symbol),value>0.01,let state=costs[symbol],state.qty>0,state.costEUR>0{let cost=state.costEUR*max(0,amount/state.qty);if cost>0{let change=value-cost;let pct=change/cost*100;pnl+=change;invested+=cost;positions.append(KrakenIOSPosition(symbol:symbol=="XBT" ? "BTC":symbol,valueEUR:value,dayChangeEUR:change,dayChangePercent:pct))}}}
+  return KrakenIOSSnapshot(totalEUR:total,dayChangeEUR:pnl,dayChangePercent:invested>0 ? pnl/invested*100:0,balances:balances,positions:positions,updatedAt:Date())}
+ private static func costBasis(apiKey:String,secret:String)async throws->[String:CostState]{var all:[[String:Any]]=[];var ofs=0;var count=Int.max
+  while ofs<count && ofs<10000{let json=try await privatePost(path:"/0/private/TradesHistory",params:["ofs":"\(ofs)"],apiKey:apiKey,secret:secret);guard let result=json["result"] as? [String:Any] else{break};count=result["count"] as? Int ?? 0;let trades=result["trades"] as? [String:[String:Any]] ?? [:];if trades.isEmpty{break};all.append(contentsOf:trades.values);ofs+=trades.count}
+  all.sort{($0["time"] as? Double ?? 0)<($1["time"] as? Double ?? 0)};var states:[String:CostState]=[:]
+  for t in all{guard let pair=t["pair"] as? String,let type=t["type"] as? String,let vol=Double(t["vol"] as? String ?? ""),let cost=Double(t["cost"] as? String ?? "")else{continue};let fee=Double(t["fee"] as? String ?? "") ?? 0;let asset=baseAsset(pair);let fx=await quoteToEUR(quoteAsset(pair));var st=states[asset] ?? CostState();if type=="buy"{st.qty+=vol;st.costEUR+=(cost+fee)*fx}else if type=="sell",st.qty>0{let sold=min(vol,st.qty);let avg=st.costEUR/st.qty;st.costEUR=max(0,st.costEUR-avg*sold);st.qty=max(0,st.qty-sold)};states[asset]=st};return states}
+ private static func balance(apiKey:String,secret:String)async throws->[String:Double]{let j=try await privatePost(path:"/0/private/Balance",params:[:],apiKey:apiKey,secret:secret);guard let r=j["result"] as? [String:String]else{throw URLError(.cannotParseResponse)};return r.compactMapValues(Double.init)}
+ private static func privatePost(path:String,params:[String:String],apiKey:String,secret:String)async throws->[String:Any]{let nonce=String(Int(Date().timeIntervalSince1970*1000));var parts=["nonce=\(nonce)"];parts+=params.map{"\($0.key)=\($0.value)"};let post=parts.joined(separator:"&");let sig=try sign(path:path,nonce:nonce,postData:post,secret:secret);var req=URLRequest(url:base.appendingPathComponent(path));req.httpMethod="POST";req.httpBody=Data(post.utf8);req.setValue(apiKey,forHTTPHeaderField:"API-Key");req.setValue(sig,forHTTPHeaderField:"API-Sign");req.setValue("application/x-www-form-urlencoded",forHTTPHeaderField:"Content-Type");let(data,response)=try await URLSession.shared.data(for:req);guard(response as? HTTPURLResponse)?.statusCode ?? 500<300 else{throw URLError(.badServerResponse)};let j=try JSONSerialization.jsonObject(with:data) as? [String:Any] ?? [:];if let e=j["error"] as? [String],let first=e.first,!first.isEmpty{throw NSError(domain:"Kraken",code:2,userInfo:[NSLocalizedDescriptionKey:first])};return j}
+ private static func sign(path:String,nonce:String,postData:String,secret:String)throws->String{guard let sd=Data(base64Encoded:secret)else{throw URLError(.userAuthenticationRequired)};let digest=SHA256.hash(data:Data((nonce+postData).utf8));var msg=Data(path.utf8);msg.append(contentsOf:digest);return Data(HMAC<SHA512>.authenticationCode(for:msg,using:SymmetricKey(data:sd))).base64EncodedString()}
+ private static func baseAsset(_ pair:String)->String{var p=pair.uppercased().replacingOccurrences(of:"XXBT",with:"XBT").replacingOccurrences(of:"XETH",with:"ETH");for q in ["ZEUR","ZUSD","EUR","USD","USDT","USDC","GBP","BTC","XBT"]{if p.hasSuffix(q){p=String(p.dropLast(q.count));break}};while p.first=="X" || p.first=="Z"{p.removeFirst()};return p=="BTC" ? "XBT":p}
+ private static func quoteAsset(_ pair:String)->String{let p=pair.uppercased();if p.hasSuffix("ZEUR")||p.hasSuffix("EUR"){return"EUR"};if p.hasSuffix("ZUSD")||p.hasSuffix("USD"){return"USD"};if p.hasSuffix("USDT"){return"USDT"};if p.hasSuffix("USDC"){return"USDC"};return"EUR"}
+ private static func quoteToEUR(_ q:String)async->Double{if q=="EUR"{return 1};return (try? await eurTicker(asset:q).current) ?? 1}
+ private static func eurTicker(asset raw:String)async throws->KrakenTickerSnapshot{let a=normalize(raw);if a=="EUR"{return KrakenTickerSnapshot(current:1,open:1)};let candidates:[(String,Bool)]=a=="XBT" ? [("XBTEUR",false),("XXBTZEUR",false)] : a=="USD" ? [("EURUSD",true)] : [("\(a)EUR",false)];for(pair,inv)in candidates{if let t=try? await ticker(pair:pair),t.current>0{return inv ? KrakenTickerSnapshot(current:1/t.current,open:1/t.open):t}};throw URLError(.cannotParseResponse)}
+ private static func ticker(pair:String)async throws->KrakenTickerSnapshot{var c=URLComponents(url:base.appendingPathComponent("/0/public/Ticker"),resolvingAgainstBaseURL:false)!;c.queryItems=[URLQueryItem(name:"pair",value:pair)];let(data,_)=try await URLSession.shared.data(from:c.url!);let j=try JSONSerialization.jsonObject(with:data) as? [String:Any];guard let r=j?["result"] as? [String:Any],let first=r.values.first as? [String:Any],let close=first["c"] as? [String],let cur=close.first.flatMap(Double.init)else{throw URLError(.cannotParseResponse)};let open=(first["o"] as? String).flatMap(Double.init) ?? cur;return KrakenTickerSnapshot(current:cur,open:open)}
+ private static func normalize(_ raw:String)->String{let b=String(raw.split(separator:".").first ?? Substring(raw));switch b{case"ZEUR":return"EUR";case"ZUSD":return"USD";case"XXBT":return"XBT";case"XETH":return"ETH";default:return String(b.drop(while:{$0=="X"||$0=="Z"}))}}
 }
