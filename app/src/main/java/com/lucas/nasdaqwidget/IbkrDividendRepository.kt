@@ -189,7 +189,7 @@ object IbkrDividendRepository {
             }
             if (conn.responseCode !in 200..299) return@runCatching 1.0
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val rate = Regex("\"regularMarketPrice\"\s*:\s*([0-9.]+)").find(body)?.groupValues?.getOrNull(1)?.toDoubleOrNull() ?: return@runCatching 1.0
+            val rate = org.json.JSONObject(body).getJSONObject("chart").getJSONArray("result").getJSONObject(0).getJSONObject("meta").getDouble("regularMarketPrice")
             if (rate > 0) 1.0 / rate else 1.0
         }.getOrDefault(1.0)
     }
