@@ -9,12 +9,16 @@ class MvrvWidgetRefreshWorker(
     params: WorkerParameters
 ) : Worker(context, params) {
     override fun doWork(): Result {
-        val primary = runCatching { MvrvRepository.refresh(applicationContext) }
-        if (primary.isFailure) {
-            runCatching { MvrvFallbackRepository.refresh(applicationContext) }
-                .onFailure { MvrvRepository.recordError(applicationContext, primary.exceptionOrNull() ?: it) }
-        }
-        MvrvWidgetProvider.updateAll(applicationContext)
-        return if (primary.isSuccess || MvrvFallbackRepository.cached(applicationContext) != null) Result.success() else Result.retry()
+        return runCatching {
+            MvrvRepository.refresh(applicationContext)
+            MvrvWidgetProvider.updateAll(applicationContext)
+        }.fold(
+            onSuccess = { Result.success() },
+            onFailure = { error ->
+                MvrvRepository.recordError(applicationContext, error)
+                MvrvWidgetProvider.updateAll(applicationContext)
+                Result.retry()
+            }
+        )
     }
 }
