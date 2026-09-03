@@ -43,7 +43,9 @@ class MvrvWidgetProvider : AppWidgetProvider() {
 
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_mvrv)
-            val snapshot = MvrvRepository.cached(context)
+            val primary = MvrvRepository.cached(context)
+            val fallbackZ = MvrvFallbackRepository.cached(context)
+            val snapshot = primary ?: fallbackZ?.let { MvrvSnapshot(it, null, null, System.currentTimeMillis()) }
             val lastError = MvrvRepository.lastError(context)
             val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
             val zFormat = DecimalFormat("0.00", symbols)
@@ -70,62 +72,36 @@ class MvrvWidgetProvider : AppWidgetProvider() {
                 }
                 views.setTextViewText(R.id.mvrvWidgetValue, "Z ${zFormat.format(snapshot.zScore)}")
                 views.setTextColor(R.id.mvrvWidgetValue, zoneColor)
-                views.setTextViewText(R.id.mvrvWidgetZone, zone)
+                views.setTextViewText(R.id.mvrvWidgetZone, if (primary == null) "$zone · secours" else zone)
 
                 val target = snapshot.estimatedHighZonePrice
                 val price = snapshot.sourcePrice
-                val distance = if (target != null && price != null && price > 0.0) {
-                    (target / price - 1.0) * 100.0
-                } else null
+                val distance = if (target != null && price != null && price > 0.0) (target / price - 1.0) * 100.0 else null
                 val detail = when {
-                    target != null && distance != null && distance > 0.0 ->
-                        "Z7 ≈ $${priceFormat.format(target)} · +${pctFormat.format(distance)}%"
-                    target != null && distance != null ->
-                        "Z7 ≈ $${priceFormat.format(target)} · atteinte"
+                    target != null && distance != null && distance > 0.0 -> "Z7 ≈ $${priceFormat.format(target)} · +${pctFormat.format(distance)}%"
+                    target != null && distance != null -> "Z7 ≈ $${priceFormat.format(target)} · atteinte"
+                    primary == null -> "MVRV Z-Score disponible"
                     else -> "Zone Z7 · estimation indisponible"
                 }
                 views.setTextViewText(R.id.mvrvWidgetDistance, detail)
             }
 
-            val refreshIntent = Intent(context, MvrvWidgetProvider::class.java).apply {
-                action = ACTION_REFRESH_MVRV
-            }
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                id,
-                refreshIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            val refreshIntent = Intent(context, MvrvWidgetProvider::class.java).apply { action = ACTION_REFRESH_MVRV }
+            val pendingIntent = PendingIntent.getBroadcast(context, id, refreshIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             views.setOnClickPendingIntent(R.id.mvrvWidgetRoot, pendingIntent)
             manager.updateAppWidget(id, views)
         }
 
         fun requestImmediateRefresh(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-            val request = OneTimeWorkRequestBuilder<MvrvWidgetRefreshWorker>()
-                .setConstraints(constraints)
-                .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "mvrv_widget_refresh_now",
-                ExistingWorkPolicy.REPLACE,
-                request
-            )
+            val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            val request = OneTimeWorkRequestBuilder<MvrvWidgetRefreshWorker>().setConstraints(constraints).build()
+            WorkManager.getInstance(context).enqueueUniqueWork("mvrv_widget_refresh_now", ExistingWorkPolicy.REPLACE, request)
         }
 
         fun scheduleRefresh(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-            val request = PeriodicWorkRequestBuilder<MvrvWidgetRefreshWorker>(6, TimeUnit.HOURS)
-                .setConstraints(constraints)
-                .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                "mvrv_widget_refresh",
-                ExistingPeriodicWorkPolicy.UPDATE,
-                request
-            )
+            val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            val request = PeriodicWorkRequestBuilder<MvrvWidgetRefreshWorker>(6, TimeUnit.HOURS).setConstraints(constraints).build()
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork("mvrv_widget_refresh", ExistingPeriodicWorkPolicy.UPDATE, request)
         }
     }
 }
