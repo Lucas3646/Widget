@@ -48,23 +48,22 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
             manager.getAppWidgetIds(component).forEach { updateWidget(context, manager, it) }
         }
 
-        fun updateOne(context: Context, manager: AppWidgetManager, id: Int) {
-            updateWidget(context, manager, id)
-        }
+        fun updateOne(context: Context, manager: AppWidgetManager, id: Int) = updateWidget(context, manager, id)
 
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
             val symbol = WidgetAssetConfig.symbol(context, id)
             val name = WidgetAssetConfig.name(context, id)
-            val data = MarketRepository.cached(context, symbol)
+            val timeframe = WidgetAssetConfig.timeframe(context, id)
+            val data = MarketRepository.cached(context, symbol, timeframe)
             val views = RemoteViews(context.packageName, R.layout.widget_nasdaq)
             views.setTextViewText(R.id.assetTitleText, name)
-            views.setTextViewText(R.id.assetSymbolText, symbol)
+            views.setTextViewText(R.id.assetSymbolText, "$symbol · $timeframe")
 
             if (data == null) {
                 views.setTextViewText(R.id.priceText, "--")
                 views.setTextViewText(R.id.changePercentText, "Connexion…")
                 views.setTextViewText(R.id.changePointsText, "")
-                views.setTextViewText(R.id.updatedText, "TOUCHER POUR CHANGER")
+                views.setTextViewText(R.id.updatedText, "$timeframe · TOUCHER POUR CHANGER")
             } else {
                 val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
                 val priceFormat = DecimalFormat("#,##0.00", symbols)
@@ -72,10 +71,7 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.priceText, priceFormat.format(data.price))
                 views.setTextViewText(R.id.changePercentText, "${signed.format(data.changePercent)}%")
                 views.setTextViewText(R.id.changePointsText, signed.format(data.change))
-                views.setTextViewText(
-                    R.id.updatedText,
-                    "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(data.updatedAtMillis))} · toucher pour changer"
-                )
+                views.setTextViewText(R.id.updatedText, "$timeframe · MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(data.updatedAtMillis))} · toucher")
                 val trendColor = if (data.change >= 0) Color.rgb(56, 242, 122) else Color.rgb(255, 82, 82)
                 views.setTextColor(R.id.changePercentText, trendColor)
                 views.setTextColor(R.id.changePointsText, trendColor)
@@ -86,12 +82,7 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
-            val configurePendingIntent = PendingIntent.getActivity(
-                context,
-                id,
-                configureIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            val configurePendingIntent = PendingIntent.getActivity(context, id, configureIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             views.setOnClickPendingIntent(R.id.widgetRoot, configurePendingIntent)
             manager.updateAppWidget(id, views)
         }
@@ -105,11 +96,7 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
         fun scheduleRefresh(context: Context) {
             val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             val request = PeriodicWorkRequestBuilder<WidgetRefreshWorker>(15, TimeUnit.MINUTES).setConstraints(constraints).build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                "market_widget_refresh",
-                ExistingPeriodicWorkPolicy.UPDATE,
-                request
-            )
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork("market_widget_refresh", ExistingPeriodicWorkPolicy.UPDATE, request)
         }
     }
 }
