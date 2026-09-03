@@ -30,7 +30,11 @@ class PortfolioWidgetProvider:AppWidgetProvider(){
    var base=0.0;var change=0.0
    i?.let{val p=twr?:it.periodChangePercent;val b=if(1+p/100>0)it.totalEur/(1+p/100) else it.totalEur;base+=b;change+=it.totalEur-b}
    k?.let{val p=it.dayChangePercent;val b=if(1+p/100>0)it.totalEur/(1+p/100) else it.totalEur;base+=b;change+=it.totalEur-b}
-   val pct=if(base>0)change/base*100 else 0.0;val top=pos.sortedByDescending{it.changePercent}.take(3);val flop=pos.sortedBy{it.changePercent}.take(3);val has=i!=null||k!=null
+   val pct=if(base>0)change/base*100 else 0.0
+   val ranked=pos.filter{it.changePercent.isFinite()}.sortedByDescending{it.changePercent}
+   val top=ranked.take(3)
+   val flop=ranked.asReversed().take(3)
+   val has=i!=null||k!=null
    val chart=when{(i?.chartValues?.size?:0)>1->i!!.chartValues.map{it+(k?.totalEur?:0.0)};has->listOf(total,total);else->emptyList()}
    ids.forEach{id->val v=RemoteViews(c.packageName,R.layout.widget_portfolio);v.setTextViewText(R.id.portfolioTotal,if(has)eur.format(total)else"— €")
     if(has){v.setTextViewText(R.id.portfolioDayChange,signedMoney(change,eur));v.setTextViewText(R.id.portfolioDayPercent,String.format(Locale.FRANCE,"%+.2f %% · %s",pct,tf.label));val col=Color.parseColor(if(pct>=0)GREEN else RED);v.setTextColor(R.id.portfolioDayChange,col);v.setTextColor(R.id.portfolioDayPercent,col);v.setImageViewBitmap(R.id.portfolioChart,sparkline(chart,pct>=0));fill(v,listOf(R.id.portfolioTop1,R.id.portfolioTop2,R.id.portfolioTop3),top,eur0);fill(v,listOf(R.id.portfolioFlop1,R.id.portfolioFlop2,R.id.portfolioFlop3),flop,eur0)}else{v.setTextViewText(R.id.portfolioDayChange,"— €");v.setTextViewText(R.id.portfolioDayPercent,"— % · ${tf.label}");v.setImageViewBitmap(R.id.portfolioChart,sparkline(emptyList(),true))}
