@@ -118,7 +118,7 @@ class AssetWidgetConfigureActivity : AppCompatActivity() {
             setPadding(dp(4), dp(8), 0, dp(5))
         })
         val timeframeSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(this@AssetWidgetConfigureActivity, android.R.layout.simple_spinner_dropdown_item, WidgetAssetConfig.timeframes)
+            this.adapter = ArrayAdapter(this@AssetWidgetConfigureActivity, android.R.layout.simple_spinner_dropdown_item, WidgetAssetConfig.timeframes)
             val current = WidgetAssetConfig.timeframe(this@AssetWidgetConfigureActivity, appWidgetId)
             setSelection(WidgetAssetConfig.timeframes.indexOf(current).coerceAtLeast(0))
         }
