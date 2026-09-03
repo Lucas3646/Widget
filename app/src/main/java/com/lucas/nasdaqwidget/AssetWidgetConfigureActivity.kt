@@ -15,6 +15,7 @@ import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
@@ -28,18 +29,12 @@ class AssetWidgetConfigureActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setResult(RESULT_CANCELED)
-        appWidgetId = intent?.extras?.getInt(
-            AppWidgetManager.EXTRA_APPWIDGET_ID,
-            AppWidgetManager.INVALID_APPWIDGET_ID
-        ) ?: AppWidgetManager.INVALID_APPWIDGET_ID
-        if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
-            finish()
-            return
-        }
+        appWidgetId = intent?.extras?.getInt(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+            ?: AppWidgetManager.INVALID_APPWIDGET_ID
+        if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) { finish(); return }
 
         val density = resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
-
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -68,9 +63,7 @@ class AssetWidgetConfigureActivity : AppCompatActivity() {
             setSingleLine(true)
             setPadding(dp(14), 0, dp(14), 0)
             background = GradientDrawable().apply {
-                cornerRadius = dp(13).toFloat()
-                setColor(Color.rgb(14, 25, 39))
-                setStroke(dp(1), Color.rgb(37, 58, 77))
+                cornerRadius = dp(13).toFloat(); setColor(Color.rgb(14, 25, 39)); setStroke(dp(1), Color.rgb(37, 58, 77))
             }
         }
         val adapter = ArrayAdapter<String>(this, android.R.layout.simple_dropdown_item_1line, mutableListOf())
@@ -101,43 +94,48 @@ class AssetWidgetConfigureActivity : AppCompatActivity() {
                 val query = s?.toString().orEmpty().trim()
                 if (!selected?.symbol.equals(query, ignoreCase = true)) selected = null
                 pendingSearch?.let(handler::removeCallbacks)
-                if (query.isBlank()) {
-                    suggestions = emptyList()
-                    adapter.clear()
-                    helper.text = "Tape le nom ou le ticker de l'actif"
-                    return
-                }
+                if (query.isBlank()) { suggestions = emptyList(); adapter.clear(); helper.text = "Tape le nom ou le ticker de l'actif"; return }
                 val task = Runnable {
                     Thread {
                         val result = AssetSearchRepository.search(query)
                         runOnUiThread {
                             if (input.text.toString().trim() != query) return@runOnUiThread
                             suggestions = result
-                            adapter.clear()
-                            adapter.addAll(result.map { "${it.symbol} — ${it.name}" })
-                            adapter.notifyDataSetChanged()
+                            adapter.clear(); adapter.addAll(result.map { "${it.symbol} — ${it.name}" }); adapter.notifyDataSetChanged()
                             if (result.isNotEmpty()) input.showDropDown()
                         }
                     }.start()
                 }
-                pendingSearch = task
-                handler.postDelayed(task, 250)
+                pendingSearch = task; handler.postDelayed(task, 250)
             }
         })
+
+        root.addView(TextView(this).apply {
+            text = "TIMEFRAME"
+            textSize = 11f
+            setTextColor(Color.rgb(142,160,178))
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(4), dp(8), 0, dp(5))
+        })
+        val timeframeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@AssetWidgetConfigureActivity, android.R.layout.simple_spinner_dropdown_item, WidgetAssetConfig.timeframes)
+            val current = WidgetAssetConfig.timeframe(this@AssetWidgetConfigureActivity, appWidgetId)
+            setSelection(WidgetAssetConfig.timeframes.indexOf(current).coerceAtLeast(0))
+        }
+        root.addView(timeframeSpinner, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)))
 
         root.addView(Button(this).apply {
             text = "UTILISER CET ACTIF"
             setTextColor(Color.rgb(7, 17, 28))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(13).toFloat()
-                setColor(Color.rgb(56, 242, 122))
-            }
+            background = GradientDrawable().apply { cornerRadius = dp(13).toFloat(); setColor(Color.rgb(56, 242, 122)) }
             setOnClickListener {
                 val suggestion = selected
                 val raw = suggestion?.symbol ?: input.text.toString().trim().uppercase()
                 if (raw.isBlank()) return@setOnClickListener
                 val name = suggestion?.name ?: raw
-                WidgetAssetConfig.save(this@AssetWidgetConfigureActivity, appWidgetId, raw, name)
+                val timeframe = timeframeSpinner.selectedItem?.toString() ?: WidgetAssetConfig.TF_1D
+                WidgetAssetConfig.save(this@AssetWidgetConfigureActivity, appWidgetId, raw, name, timeframe)
+                Thread { runCatching { MarketRepository.fetchAndCache(this@AssetWidgetConfigureActivity, raw, timeframe) } }.start()
                 val manager = AppWidgetManager.getInstance(this@AssetWidgetConfigureActivity)
                 NasdaqWidgetProvider.updateOne(this@AssetWidgetConfigureActivity, manager, appWidgetId)
                 NasdaqWidgetProvider.requestImmediateRefresh(this@AssetWidgetConfigureActivity)
@@ -149,8 +147,5 @@ class AssetWidgetConfigureActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    override fun onDestroy() {
-        pendingSearch?.let(handler::removeCallbacks)
-        super.onDestroy()
-    }
+    override fun onDestroy() { pendingSearch?.let(handler::removeCallbacks); super.onDestroy() }
 }
