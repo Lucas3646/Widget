@@ -13,13 +13,15 @@ class WidgetRefreshWorker(
     override fun doWork(): Result {
         val manager = AppWidgetManager.getInstance(applicationContext)
         val ids = manager.getAppWidgetIds(ComponentName(applicationContext, NasdaqWidgetProvider::class.java))
-        val symbols = ids.map { WidgetAssetConfig.symbol(applicationContext, it) }.distinct()
+        val requests = ids.map {
+            WidgetAssetConfig.symbol(applicationContext, it) to WidgetAssetConfig.timeframe(applicationContext, it)
+        }.distinct()
         var success = false
-        symbols.forEach { symbol ->
-            runCatching { MarketRepository.fetchAndCache(applicationContext, symbol) }
+        requests.forEach { (symbol, timeframe) ->
+            runCatching { MarketRepository.fetchAndCache(applicationContext, symbol, timeframe) }
                 .onSuccess { success = true }
         }
         NasdaqWidgetProvider.updateAll(applicationContext)
-        return if (success || symbols.isEmpty()) Result.success() else Result.retry()
+        return if (success || requests.isEmpty()) Result.success() else Result.retry()
     }
 }
