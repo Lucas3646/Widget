@@ -9,7 +9,7 @@ struct MVRVWidgetSnapshot: Codable, Hashable {
 
 enum MVRVService {
     private static let cacheKey = "mvrvWidgetSnapshot"
-    private static let base = "https://bitcoin-data.com/v1"
+    private static let bases = ["https://bitcoin-data.com/v1", "https://bitcoin-data.com/api/v1"]
 
     static func cached() -> MVRVWidgetSnapshot? {
         guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
@@ -17,14 +17,21 @@ enum MVRVService {
     }
 
     static func refresh() async throws -> MVRVWidgetSnapshot {
-        async let zAny = fetchJSON("\(base)/mvrv-zscore/last")
-        async let priceAny = fetchJSON("\(base)/btc-price/last")
-        let zRoot = try await zAny
-        let priceRoot = try? await priceAny
-        guard let z = findNumber(zRoot, preferred: ["mvrv-zscore", "mvrv_zscore", "mvrvzscore", "zscore", "value"]) else {
-            throw URLError(.cannotParseResponse)
+        var z: Double?
+        var price: Double?
+        var lastError: Error?
+        for base in bases {
+            do {
+                async let zAny = fetchJSON("\(base)/mvrv-zscore/last")
+                async let priceAny = fetchJSON("\(base)/btc-price/last")
+                let zRoot = try await zAny
+                let priceRoot = try? await priceAny
+                z = findNumber(zRoot, preferred: ["mvrv-zscore", "mvrv-z-score", "mvrv_zscore", "mvrv_z_score", "mvrvzscore", "zscore", "z_score", "value"])
+                price = priceRoot.flatMap { findNumber($0, preferred: ["price", "btcprice", "btc_price", "close", "value"]) }
+                if z != nil { break }
+            } catch { lastError = error }
         }
-        let price = priceRoot.flatMap { findNumber($0, preferred: ["price", "btcprice", "btc_price", "close", "value"]) }
+        guard let z else { throw lastError ?? URLError(.cannotParseResponse) }
         let snapshot = MVRVWidgetSnapshot(zScore: z, price: price, updatedAt: Date())
         if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: cacheKey) }
         WidgetCenter.shared.reloadTimelines(ofKind: "MVRVWidget")
@@ -42,7 +49,7 @@ enum MVRVService {
     private static func fetchJSON(_ url: String) async throws -> Any {
         var request = URLRequest(url: URL(string: url)!)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("MarketWidgets/1.9 iOS", forHTTPHeaderField: "User-Agent")
+        request.setValue("MarketWidgets/2.0 iOS", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try JSONSerialization.jsonObject(with: data)
@@ -57,6 +64,8 @@ enum MVRVService {
             for value in dict.values { if let found = findNumber(value, preferred: preferred) { return found } }
         } else if let array = node as? [Any] {
             for value in array { if let found = findNumber(value, preferred: preferred) { return found } }
+        } else if let number = node as? NSNumber {
+            return number.doubleValue
         }
         return nil
     }
