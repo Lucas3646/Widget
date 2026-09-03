@@ -1,72 +1,24 @@
 import Foundation
 import WidgetKit
 
-struct MVRVWidgetSnapshot: Codable, Hashable {
-    let zScore: Double
-    let price: Double?
-    let updatedAt: Date
-}
+struct MVRVWidgetSnapshot: Codable, Hashable { let zScore:Double; let price:Double?; let updatedAt:Date }
 
 enum MVRVService {
-    private static let cacheKey = "mvrvWidgetSnapshot"
-    private static let bases = ["https://bitcoin-data.com/v1", "https://bitcoin-data.com/api/v1"]
-
-    static func cached() -> MVRVWidgetSnapshot? {
-        guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
-        return try? JSONDecoder().decode(MVRVWidgetSnapshot.self, from: data)
+    private static let cacheKey="mvrvWidgetSnapshot"
+    private static let base="https://bitcoin-data.com/v1"
+    static func cached()->MVRVWidgetSnapshot?{guard let d=UserDefaults.standard.data(forKey:cacheKey)else{return nil};return try? JSONDecoder().decode(MVRVWidgetSnapshot.self,from:d)}
+    static func refresh() async throws->MVRVWidgetSnapshot{
+        async let zAny=fetchJSON("\(base)/mvrv-zscore/last")
+        async let pAny=fetchJSON("\(base)/btc-price/last")
+        let zr=try await zAny
+        let pr=try? await pAny
+        let keys=Set(["mvrvzscore","zscore","value"])
+        guard let z=findNumber(zr,preferred:keys) else {throw NSError(domain:"MVRV",code:2,userInfo:[NSLocalizedDescriptionKey:"BGeometrics MVRV: valeur absente"])}
+        let price=pr.flatMap{findNumber($0,preferred:Set(["price","btcprice","close","value"]))}
+        let s=MVRVWidgetSnapshot(zScore:z,price:price,updatedAt:Date());if let d=try? JSONEncoder().encode(s){UserDefaults.standard.set(d,forKey:cacheKey)};WidgetCenter.shared.reloadTimelines(ofKind:"MVRVWidget");return s
     }
-
-    static func refresh() async throws -> MVRVWidgetSnapshot {
-        var z: Double?
-        var price: Double?
-        var lastError: Error?
-        for base in bases {
-            do {
-                async let zAny = fetchJSON("\(base)/mvrv-zscore/last")
-                async let priceAny = fetchJSON("\(base)/btc-price/last")
-                let zRoot = try await zAny
-                let priceRoot = try? await priceAny
-                z = findNumber(zRoot, preferred: ["mvrv-zscore", "mvrv-z-score", "mvrv_zscore", "mvrv_z_score", "mvrvzscore", "zscore", "z_score", "value"])
-                price = priceRoot.flatMap { findNumber($0, preferred: ["price", "btcprice", "btc_price", "close", "value"]) }
-                if z != nil { break }
-            } catch { lastError = error }
-        }
-        guard let z else { throw lastError ?? URLError(.cannotParseResponse) }
-        let snapshot = MVRVWidgetSnapshot(zScore: z, price: price, updatedAt: Date())
-        if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: cacheKey) }
-        WidgetCenter.shared.reloadTimelines(ofKind: "MVRVWidget")
-        return snapshot
-    }
-
-    static func zone(_ z: Double) -> String {
-        if z < 0 { return "Sous-évalué" }
-        if z < 2 { return "Basse" }
-        if z < 5 { return "Neutre" }
-        if z < 7 { return "Chaude" }
-        return "Haute"
-    }
-
-    private static func fetchJSON(_ url: String) async throws -> Any {
-        var request = URLRequest(url: URL(string: url)!)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("MarketWidgets/2.0 iOS", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try JSONSerialization.jsonObject(with: data)
-    }
-
-    private static func findNumber(_ node: Any, preferred: Set<String>) -> Double? {
-        if let dict = node as? [String: Any] {
-            for (key, value) in dict where preferred.contains(key.lowercased()) {
-                if let number = value as? NSNumber { return number.doubleValue }
-                if let string = value as? String, let number = Double(string.replacingOccurrences(of: ",", with: "")) { return number }
-            }
-            for value in dict.values { if let found = findNumber(value, preferred: preferred) { return found } }
-        } else if let array = node as? [Any] {
-            for value in array { if let found = findNumber(value, preferred: preferred) { return found } }
-        } else if let number = node as? NSNumber {
-            return number.doubleValue
-        }
-        return nil
-    }
+    static func zone(_ z:Double)->String{if z<0{return "Sous-évalué"};if z<2{return "Basse"};if z<5{return "Neutre"};if z<7{return "Chaude"};return "Haute"}
+    private static func fetchJSON(_ url:String)async throws->Any{var r=URLRequest(url:URL(string:url)!);r.setValue("application/json",forHTTPHeaderField:"Accept");r.setValue("MarketWidgets/2.1 iOS",forHTTPHeaderField:"User-Agent");let(d,res)=try await URLSession.shared.data(for:r);guard let h=res as? HTTPURLResponse,(200..<300).contains(h.statusCode)else{throw URLError(.badServerResponse)};if let text=String(data:d,encoding:.utf8),let n=Double(text.trimmingCharacters(in:.whitespacesAndNewlines)){return n};return try JSONSerialization.jsonObject(with:d)}
+    private static func norm(_ s:String)->String{s.lowercased().filter{$0.isLetter||$0.isNumber}}
+    private static func findNumber(_ node:Any,preferred:Set<String>)->Double?{let p=Set(preferred.map(norm));if let d=node as? [String:Any]{for(k,v)in d where p.contains(norm(k)){if let n=v as? NSNumber{return n.doubleValue};if let s=v as? String,let n=Double(s.replacingOccurrences(of:",",with:"")){return n}};for v in d.values{if let n=findNumber(v,preferred:p){return n}}}else if let a=node as? [Any]{for v in a{if let n=findNumber(v,preferred:p){return n}}}else if let n=node as? NSNumber{return n.doubleValue};return nil}
 }
