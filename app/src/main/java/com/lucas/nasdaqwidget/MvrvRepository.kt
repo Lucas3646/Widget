@@ -28,16 +28,43 @@ object MvrvRepository {
         }
         return null
     }
-    private fun parse(body:String):Any?=runCatching{JSONObject(body)}.getOrElse{runCatching{JSONArray(body)}.getOrNull()}
-    private fun findNumber(node:Any?,preferred:Set<String>):Double?=when(node){
-        is JSONObject->{
-            val keys=node.keys().asSequence().toList()
-            for(k in keys){if(k.lowercase().replace("-","").replace("_","") in preferred.map{it.replace("-","").replace("_","")}){val r=node.opt(k);val n=when(r){is Number->r.toDouble();is String->r.replace(",","").toDoubleOrNull();else->null};if(n!=null)return n}}
-            for(k in keys){val n=findNumber(node.opt(k),preferred);if(n!=null)return n};null
+
+    private fun parse(body:String):Any? = runCatching { JSONObject(body) }.getOrElse { runCatching { JSONArray(body) }.getOrNull() }
+
+    private fun findNumber(node:Any?,preferred:Set<String>):Double? {
+        val normalizedPreferred=preferred.map{it.replace("-","").replace("_","").lowercase()}.toSet()
+        return when(node){
+            is JSONObject -> {
+                val keys=node.keys().asSequence().toList()
+                for(k in keys){
+                    val normalized=k.replace("-","").replace("_","").lowercase()
+                    if(normalized in normalizedPreferred){
+                        val raw=node.opt(k)
+                        val number=when(raw){
+                            is Number -> raw.toDouble()
+                            is String -> raw.replace(",","").toDoubleOrNull()
+                            else -> null
+                        }
+                        if(number!=null) return number
+                    }
+                }
+                for(k in keys){
+                    val number=findNumber(node.opt(k),preferred)
+                    if(number!=null) return number
+                }
+                null
+            }
+            is JSONArray -> {
+                for(i in node.length()-1 downTo 0){
+                    val number=findNumber(node.opt(i),preferred)
+                    if(number!=null) return number
+                }
+                null
+            }
+            else -> null
         }
-        is JSONArray->{for(i in node.length()-1 downTo 0){val n=findNumber(node.opt(i),preferred);if(n!=null)return n};null}
-        else->null
     }
+
     private fun getJson(endpoint:String):String{
         val c=(URL(endpoint).openConnection() as HttpURLConnection).apply{requestMethod="GET";connectTimeout=15000;readTimeout=25000;setRequestProperty("Accept","application/json");setRequestProperty("User-Agent","Mozilla/5.0 MarketWidgets/2.0")}
         return try{val code=c.responseCode;val body=(if(code in 200..299)c.inputStream else c.errorStream)?.bufferedReader()?.use{it.readText()}.orEmpty();if(code !in 200..299)throw IllegalStateException("HTTP $code");body}finally{c.disconnect()}
