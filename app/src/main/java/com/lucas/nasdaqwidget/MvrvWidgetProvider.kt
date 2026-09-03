@@ -46,7 +46,8 @@ class MvrvWidgetProvider : AppWidgetProvider() {
             val primary = MvrvRepository.cached(context)
             val fallbackZ = MvrvFallbackRepository.cached(context)
             val snapshot = primary ?: fallbackZ?.let { MvrvSnapshot(it, null, null, System.currentTimeMillis()) }
-            val lastError = MvrvRepository.lastError(context)
+            val primaryError = MvrvRepository.lastError(context)
+            val fallbackError = MvrvFallbackRepository.lastError(context)
             val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
             val zFormat = DecimalFormat("0.00", symbols)
             val priceFormat = DecimalFormat("#,##0", symbols)
@@ -54,12 +55,13 @@ class MvrvWidgetProvider : AppWidgetProvider() {
 
             if (snapshot == null) {
                 views.setTextViewText(R.id.mvrvWidgetValue, "Z --")
-                if (lastError == null) {
+                if (primaryError == null && fallbackError == null) {
                     views.setTextViewText(R.id.mvrvWidgetZone, "Chargement…")
                     views.setTextViewText(R.id.mvrvWidgetDistance, "Toucher pour actualiser")
                 } else {
                     views.setTextViewText(R.id.mvrvWidgetZone, "Source indisponible")
-                    views.setTextViewText(R.id.mvrvWidgetDistance, "Toucher pour réessayer")
+                    val diagnostic = fallbackError ?: primaryError ?: "Erreur inconnue"
+                    views.setTextViewText(R.id.mvrvWidgetDistance, diagnostic.take(52))
                 }
                 views.setTextColor(R.id.mvrvWidgetValue, Color.rgb(142, 160, 178))
             } else {
