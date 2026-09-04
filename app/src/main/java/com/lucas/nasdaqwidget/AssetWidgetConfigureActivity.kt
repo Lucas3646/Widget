@@ -17,6 +17,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 class AssetWidgetConfigureActivity : AppCompatActivity() {
@@ -123,6 +124,15 @@ class AssetWidgetConfigureActivity : AppCompatActivity() {
             setSelection(WidgetAssetConfig.timeframes.indexOf(current).coerceAtLeast(0))
         }
         root.addView(timeframeSpinner, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)))
+
+        root.addView(Button(this).apply {
+            text = "↻ ACTUALISER LE WIDGET"
+            setOnClickListener {
+                NasdaqWidgetProvider.updateOne(this@AssetWidgetConfigureActivity, AppWidgetManager.getInstance(this@AssetWidgetConfigureActivity), appWidgetId)
+                NasdaqWidgetProvider.requestImmediateRefresh(this@AssetWidgetConfigureActivity)
+                Toast.makeText(this@AssetWidgetConfigureActivity, "Actualisation du widget lancée", Toast.LENGTH_SHORT).show()
+            }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) })
 
         root.addView(Button(this).apply {
             text = "UTILISER CET ACTIF"
