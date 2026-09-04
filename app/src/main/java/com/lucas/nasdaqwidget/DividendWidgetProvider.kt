@@ -44,7 +44,7 @@ class DividendWidgetProvider : AppWidgetProvider() {
             val openConnections = PendingIntent.getActivity(
                 context,
                 401,
-                Intent(context, BrokerConnectionsActivity::class.java),
+                Intent(context, BrokerConnectionsActivity::class.java).putExtra("refresh_target", "dividend"),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             listOf(
