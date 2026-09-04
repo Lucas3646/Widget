@@ -30,6 +30,7 @@ class BrokerConnectionsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val refreshTarget = intent.getStringExtra("refresh_target")
         val d = resources.displayMetrics.density
         fun dp(v: Int) = (v * d).toInt()
         val root = LinearLayout(this).apply {
@@ -40,10 +41,24 @@ class BrokerConnectionsActivity : AppCompatActivity() {
         root.addView(TextView(this).apply { text = "Comptes connectés"; textSize = 29f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD) })
         root.addView(TextView(this).apply {
             text = "Lecture seule · Kraken + IBKR. Les identifiants sont saisis une seule fois puis restent chiffrés sur l’appareil."
-            textSize = 14f; setTextColor(Color.rgb(142, 160, 178)); setPadding(0, dp(5), 0, dp(22))
+            textSize = 14f; setTextColor(Color.rgb(142, 160, 178)); setPadding(0, dp(5), 0, dp(12))
+        })
+        root.addView(Button(this).apply {
+            text = "↻ ACTUALISER LE WIDGET"
+            setOnClickListener {
+                when (refreshTarget) {
+                    "dividend" -> DividendWidgetProvider.refreshAndUpdate(this@BrokerConnectionsActivity)
+                    "portfolio" -> PortfolioWidgetProvider.refreshAndUpdate(this@BrokerConnectionsActivity)
+                    else -> {
+                        PortfolioWidgetProvider.refreshAndUpdate(this@BrokerConnectionsActivity)
+                        if (BrokerConnectionStore.hasIbkrSetup(this@BrokerConnectionsActivity)) DividendWidgetProvider.refreshAndUpdate(this@BrokerConnectionsActivity)
+                    }
+                }
+                Toast.makeText(this@BrokerConnectionsActivity, "Actualisation du widget lancée", Toast.LENGTH_SHORT).show()
+            }
         })
 
-        root.addView(TextView(this).apply { text = "KRAKEN PRO"; textSize = 18f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD) })
+        root.addView(TextView(this).apply { text = "KRAKEN PRO"; textSize = 18f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(18), 0, 0) })
         krakenStatus = statusText(); root.addView(krakenStatus)
         krakenKey = EditText(this).apply { hint = "API Key"; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY); setSingleLine(true) }
         krakenSecret = EditText(this).apply { hint = "Private Key / Secret"; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY); setSingleLine(true); inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
