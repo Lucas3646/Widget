@@ -16,6 +16,7 @@ import android.widget.AutoCompleteTextView
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 class DrawdownWidgetConfigureActivity : AppCompatActivity() {
@@ -124,6 +125,15 @@ class DrawdownWidgetConfigureActivity : AppCompatActivity() {
                 handler.postDelayed(task, 250)
             }
         })
+
+        root.addView(Button(this).apply {
+            text = "↻ ACTUALISER LE WIDGET"
+            setOnClickListener {
+                DrawdownWidgetProvider.updateOne(this@DrawdownWidgetConfigureActivity, AppWidgetManager.getInstance(this@DrawdownWidgetConfigureActivity), appWidgetId)
+                DrawdownWidgetProvider.requestImmediateRefresh(this@DrawdownWidgetConfigureActivity)
+                Toast.makeText(this@DrawdownWidgetConfigureActivity, "Actualisation du widget lancée", Toast.LENGTH_SHORT).show()
+            }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(8) })
 
         root.addView(Button(this).apply {
             text = "UTILISER CET ACTIF"
