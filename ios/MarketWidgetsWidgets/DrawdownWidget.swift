@@ -27,7 +27,7 @@ struct DrawdownWidgetProvider: AppIntentTimelineProvider {
         let symbol = normalized(configuration.symbol, fallback: "BTC-USD")
         let snapshot = try? await MarketService.drawdown(symbol: symbol)
         let entry = DrawdownWidgetEntry(date: Date(), symbol: symbol, snapshot: snapshot)
-        return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(30 * 60)))
+        return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(15 * 60)))
     }
 
     private func normalized(_ value: String, fallback: String) -> String {
