@@ -30,7 +30,7 @@ struct DividendWidgetProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<DividendWidgetEntry>) -> Void) {
         let entry = DividendWidgetEntry(date: Date(), dividend: IBKRDividendService.cached())
-        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(3600))))
+        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(15 * 60))))
     }
 }
 
