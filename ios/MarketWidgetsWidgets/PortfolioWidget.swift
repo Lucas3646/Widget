@@ -5,7 +5,7 @@ struct PortfolioWidgetEntry: TimelineEntry { let date: Date; let snapshot: Portf
 struct PortfolioWidgetProvider: TimelineProvider {
     func placeholder(in context: Context) -> PortfolioWidgetEntry { PortfolioWidgetEntry(date: Date(), snapshot: .preview) }
     func getSnapshot(in context: Context, completion: @escaping (PortfolioWidgetEntry) -> Void) { completion(PortfolioWidgetEntry(date: Date(), snapshot: .preview)) }
-    func getTimeline(in context: Context, completion: @escaping (Timeline<PortfolioWidgetEntry>) -> Void) { completion(Timeline(entries: [PortfolioWidgetEntry(date: Date(), snapshot: .preview)], policy: .after(Date().addingTimeInterval(1800)))) }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<PortfolioWidgetEntry>) -> Void) { completion(Timeline(entries: [PortfolioWidgetEntry(date: Date(), snapshot: .preview)], policy: .after(Date().addingTimeInterval(900)))) }
 }
 
 struct PortfolioSparkline: View {
