@@ -106,7 +106,7 @@ class DrawdownWidgetProvider : AppWidgetProvider() {
         }
 
         private fun scheduleRefresh(context: Context) {
-            val request = PeriodicWorkRequestBuilder<DrawdownWidgetRefreshWorker>(30, TimeUnit.MINUTES)
+            val request = PeriodicWorkRequestBuilder<DrawdownWidgetRefreshWorker>(15, TimeUnit.MINUTES)
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
