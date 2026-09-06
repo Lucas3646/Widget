@@ -7,13 +7,20 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import java.text.NumberFormat
 import java.util.Currency
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class DividendWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         renderAll(context)
+        scheduleRefresh(context)
         if (BrokerConnectionStore.hasIbkrSetup(context)) {
             Thread {
                 runCatching { IbkrDividendRepository.refresh(context) }
@@ -31,6 +38,21 @@ class DividendWidgetProvider : AppWidgetProvider() {
         }
 
         fun updateAll(context: Context) = renderAll(context)
+
+        private fun scheduleRefresh(context: Context) {
+            val request = PeriodicWorkRequestBuilder<DividendRefreshWorker>(15, TimeUnit.MINUTES)
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "dividend_widget_refresh",
+                ExistingPeriodicWorkPolicy.UPDATE,
+                request
+            )
+        }
 
         private fun renderAll(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
