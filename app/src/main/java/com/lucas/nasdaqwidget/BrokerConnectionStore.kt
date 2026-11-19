@@ -18,7 +18,9 @@ object BrokerConnectionStore {
     data class KrakenCredentials(val apiKey: String, val apiSecret: String)
     data class IbkrFlexCredentials(val token: String, val queryId: String)
 
+    @Synchronized
     fun saveKraken(context: Context, apiKey: String, apiSecret: String) {
+        KrakenPortfolioRepository.clear(context)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("kraken_key", encrypt(apiKey.trim()))
             .putString("kraken_secret", encrypt(apiSecret.trim()))
@@ -36,9 +38,17 @@ object BrokerConnectionStore {
     fun hasKraken(context: Context): Boolean = krakenCredentials(context) != null
     fun isKrakenVerified(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("kraken_verified", false)
     fun setKrakenVerified(context: Context, verified: Boolean) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("kraken_verified", verified).apply() }
-    fun clearKraken(context: Context) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("kraken_key").remove("kraken_secret").remove("kraken_verified").apply() }
+    @Synchronized
+    fun clearKraken(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove("kraken_key").remove("kraken_secret").remove("kraken_verified").apply()
+        KrakenPortfolioRepository.clear(context)
+    }
 
+    @Synchronized
     fun saveIbkrFlex(context: Context, token: String, queryId: String) {
+        IbkrFlexRepository.clear(context)
+        IbkrDividendRepository.clear(context)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("ibkr_flex_token", encrypt(token.trim()))
             .putString("ibkr_flex_query", encrypt(queryId.trim()))
@@ -58,7 +68,13 @@ object BrokerConnectionStore {
     fun isIbkrVerified(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("ibkr_verified", false)
     fun setIbkrVerified(context: Context, verified: Boolean) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("ibkr_verified", verified).apply() }
     fun setIbkrSetupAcknowledged(context: Context, value: Boolean) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("ibkr_setup", value).apply() }
-    fun clearIbkr(context: Context) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("ibkr_flex_token").remove("ibkr_flex_query").remove("ibkr_verified").remove("ibkr_setup").apply() }
+    @Synchronized
+    fun clearIbkr(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove("ibkr_flex_token").remove("ibkr_flex_query").remove("ibkr_verified").remove("ibkr_setup").apply()
+        IbkrFlexRepository.clear(context)
+        IbkrDividendRepository.clear(context)
+    }
 
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

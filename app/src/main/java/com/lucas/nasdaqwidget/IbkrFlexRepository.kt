@@ -3,34 +3,104 @@ package com.lucas.nasdaqwidget
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
-import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
-import java.io.StringReader
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
-data class IbkrPositionSnapshot(val symbol:String,val valueEur:Double,val periodChangeEur:Double,val periodChangePercent:Double)
-data class IbkrPortfolioSnapshot(val totalEur:Double,val periodChangeEur:Double,val periodChangePercent:Double,val positions:List<IbkrPositionSnapshot>,val chartValues:List<Double>,val updatedAt:Long)
-private data class FlexPosition(val symbol:String,val quantity:Double,val markPrice:Double,val positionValue:Double,val currency:String)
-private data class FlexCash(val amount:Double,val currency:String)
-private data class FlexNav(val date:LocalDate,val total:Double,val currency:String,val accountId:String)
-private data class ParsedFlex(val positions:List<FlexPosition>,val cash:List<FlexCash>,val nav:List<FlexNav>)
-private data class YahooQuote(val current:Double,val reference:Double)
-object IbkrFlexRepository{
- private const val PREFS="ibkr_flex_cache";private const val BASE="https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
- fun refresh(context:Context,timeframe:PortfolioTimeframe=PortfolioTimeframeStore.get(context)):IbkrPortfolioSnapshot{val credentials=BrokerConnectionStore.ibkrFlexCredentials(context)?:error("Token Flex ou Query ID absent");val parsed=parseStatement(fetchStatement(credentials));if(parsed.positions.isEmpty()&&parsed.cash.isEmpty())error("Aucune position ni solde cash dans la Flex Query");var positionsTotal=0.0;var change=0.0;val live=mutableListOf<IbkrPositionSnapshot>();parsed.positions.forEach{p->val quote=yahooQuote(p.symbol,p.currency,timeframe);val fx=fxToEur(p.currency);val current=quote?.current?:p.markPrice;val reference=quote?.reference?:current;val baseValue=if(p.positionValue!=0.0)p.positionValue*fx else p.quantity*p.markPrice*fx;val currentValue=if(quote!=null&&p.markPrice>0)baseValue*(current/p.markPrice)else baseValue;positionsTotal+=currentValue;val delta=if(reference!=0.0)currentValue*(current/reference-1.0)else 0.0;change+=delta;val percent=if(reference!=0.0)(current/reference-1.0)*100 else 0.0;if(kotlin.math.abs(currentValue)>0.01)live+=IbkrPositionSnapshot(p.symbol,currentValue,delta,percent)};val cash=parsed.cash.sumOf{it.amount*fxToEur(it.currency)};val total=positionsTotal+cash;val previous=total-change;val chart=buildNavChart(parsed.nav,timeframe,total);val s=IbkrPortfolioSnapshot(total,change,if(previous!=0.0)change/previous*100 else 0.0,live,chart,System.currentTimeMillis());cache(context,s);BrokerConnectionStore.setIbkrVerified(context,true);return s}
- fun cached(context:Context):IbkrPortfolioSnapshot?{val p=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE);if(!p.contains("total"))return null;val ps=mutableListOf<IbkrPositionSnapshot>();p.getString("positions",null)?.let{raw->runCatching{JSONArray(raw)}.getOrNull()?.let{a->for(i in 0 until a.length()){val o=a.optJSONObject(i)?:continue;ps+=IbkrPositionSnapshot(o.optString("symbol"),o.optDouble("value"),o.optDouble("change"),o.optDouble("percent"))}}};val chart=mutableListOf<Double>();p.getString("chart",null)?.let{raw->runCatching{JSONArray(raw)}.getOrNull()?.let{a->for(i in 0 until a.length())if(!a.isNull(i))chart+=a.optDouble(i)}};return IbkrPortfolioSnapshot(Double.fromBits(p.getLong("total",0)),Double.fromBits(p.getLong("change",0)),Double.fromBits(p.getLong("percent",0)),ps,chart,p.getLong("updated",0))}
- fun clear(context:Context){context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply()}
- private fun cache(c:Context,s:IbkrPortfolioSnapshot){val ps=JSONArray();s.positions.forEach{ps.put(JSONObject().put("symbol",it.symbol).put("value",it.valueEur).put("change",it.periodChangeEur).put("percent",it.periodChangePercent))};val ch=JSONArray();s.chartValues.forEach(ch::put);c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putLong("total",s.totalEur.toBits()).putLong("change",s.periodChangeEur.toBits()).putLong("percent",s.periodChangePercent.toBits()).putString("positions",ps.toString()).putString("chart",ch.toString()).putLong("updated",s.updatedAt).apply()}
- private fun buildNavChart(nav:List<FlexNav>,tf:PortfolioTimeframe,total:Double):List<Double>{if(nav.isEmpty())return listOf((total-total*0.002).coerceAtLeast(0.0),total);val now=LocalDate.now();val start=when(tf){PortfolioTimeframe.SESSION->now.minusDays(7);PortfolioTimeframe.MONTH->now.minusMonths(1);PortfolioTimeframe.THREE_MONTHS->now.minusMonths(3);PortfolioTimeframe.YTD->now.withDayOfYear(1);PortfolioTimeframe.YEAR->now.minusYears(1)};val values=nav.filter{!it.date.isBefore(start)}.groupBy{it.date}.toSortedMap().values.map{r->r.sumOf{it.total*fxToEur(it.currency)}}.filter{it.isFinite()&&it>0};val sampled=if(values.size<=40)values else values.filterIndexed{idx,_->idx%((values.size/40).coerceAtLeast(1))==0}.takeLast(40);return(sampled+total).takeLast(41).ifEmpty{listOf(total)}}
- private fun parseStatement(xml:String):ParsedFlex{val ps=mutableListOf<FlexPosition>();val cash=mutableListOf<FlexCash>();val nav=mutableListOf<FlexNav>();val x=XmlPullParserFactory.newInstance().newPullParser().apply{setInput(StringReader(xml))};var e=x.eventType;while(e!=XmlPullParser.END_DOCUMENT){if(e==XmlPullParser.START_TAG)when(x.name){"OpenPosition"->{val s=x.getAttributeValue(null,"symbol").orEmpty();val q=x.getAttributeValue(null,"position")?.toDoubleOrNull()?:0.0;val m=x.getAttributeValue(null,"markPrice")?.toDoubleOrNull()?:0.0;val v=x.getAttributeValue(null,"positionValue")?.toDoubleOrNull()?:0.0;val c=x.getAttributeValue(null,"currency").orEmpty();if(s.isNotBlank()&&q!=0.0)ps+=FlexPosition(s,q,m,v,c)};"CashReportCurrency"->{val c=x.getAttributeValue(null,"currency").orEmpty();if(c!="BASE_SUMMARY"){val v=listOf("endingCash","endingSettledCash","endingCashSecurities").firstNotNullOfOrNull{x.getAttributeValue(null,it)?.toDoubleOrNull()}?:0.0;if(v!=0.0)cash+=FlexCash(v,c)}};"EquitySummaryByReportDateInBase"->{val d=runCatching{LocalDate.parse(x.getAttributeValue(null,"reportDate").orEmpty(),DateTimeFormatter.BASIC_ISO_DATE)}.getOrNull();val t=x.getAttributeValue(null,"total")?.toDoubleOrNull()?:0.0;val c=x.getAttributeValue(null,"currency").orEmpty();val a=x.getAttributeValue(null,"accountId").orEmpty().ifBlank{"default"};if(d!=null&&t>0)nav+=FlexNav(d,t,c,a)}};e=x.next()};return ParsedFlex(ps,cash,nav)}
- private fun fetchStatement(c:BrokerConnectionStore.IbkrFlexCredentials):String{val token=URLEncoder.encode(c.token,"UTF-8");val query=URLEncoder.encode(c.queryId,"UTF-8");val send=get("$BASE/SendRequest?t=$token&q=$query&v=3");val ref=tagText(send,"ReferenceCode")?:error(tagText(send,"ErrorMessage")?:"IBKR Flex: ReferenceCode absent");var last="Rapport IBKR en préparation";repeat(6){if(it>0)Thread.sleep(1000);val b=get("$BASE/GetStatement?t=$token&q=${URLEncoder.encode(ref,"UTF-8")}&v=3");if(b.contains("<FlexQueryResponse"))return b;last=tagText(b,"ErrorMessage")?:last};error(last)}
- private fun get(url:String):String{val c=(URL(url).openConnection()as HttpURLConnection).apply{connectTimeout=12000;readTimeout=20000;setRequestProperty("User-Agent","MarketWidgets/1.7 Android")};return try{val s=if(c.responseCode in 200..299)c.inputStream else c.errorStream;val b=s.bufferedReader().use{it.readText()};if(c.responseCode !in 200..299)error("IBKR HTTP ${c.responseCode}");b}finally{c.disconnect()}}
- private fun yahooQuote(symbol:String,currency:String,tf:PortfolioTimeframe):YahooQuote?{val candidates=when(currency.uppercase()){"USD"->listOf(symbol);"GBP"->listOf("$symbol.L",symbol);"EUR"->listOf("$symbol.PA","$symbol.AS","$symbol.BR","$symbol.DE","$symbol.MI",symbol);else->listOf(symbol)};val range=when(tf){PortfolioTimeframe.SESSION->"1d";PortfolioTimeframe.MONTH->"1mo";PortfolioTimeframe.THREE_MONTHS->"3mo";PortfolioTimeframe.YTD->"ytd";PortfolioTimeframe.YEAR->"1y"};val interval=if(tf==PortfolioTimeframe.SESSION)"5m" else "1d";for(candidate in candidates){val r=runCatching{val enc=URLEncoder.encode(candidate,"UTF-8");val root=JSONObject(getYahoo("https://query1.finance.yahoo.com/v8/finance/chart/$enc?range=$range&interval=$interval&includePrePost=true"));val z=root.getJSONObject("chart").optJSONArray("result")?.optJSONObject(0)?:return@runCatching null;val meta=z.getJSONObject("meta");val current=meta.optDouble("regularMarketPrice",Double.NaN);if(!current.isFinite())return@runCatching null;val ref=if(tf==PortfolioTimeframe.SESSION)meta.optDouble("chartPreviousClose",meta.optDouble("previousClose",current))else{val closes=z.getJSONObject("indicators").getJSONArray("quote").getJSONObject(0).getJSONArray("close");var first=current;for(i in 0 until closes.length())if(!closes.isNull(i)){first=closes.getDouble(i);break};first};YahooQuote(current,ref)}.getOrNull();if(r!=null)return r};return null}
- private fun getYahoo(url:String):String{val c=(URL(url).openConnection()as HttpURLConnection).apply{connectTimeout=8000;readTimeout=8000;setRequestProperty("User-Agent","Mozilla/5.0 MarketWidgets")};return try{if(c.responseCode !in 200..299)error("quote");c.inputStream.bufferedReader().use{it.readText()}}finally{c.disconnect()}}
- private fun fxToEur(currency:String):Double{val c=currency.uppercase();if(c.isBlank()||c=="EUR"||c=="BASE_SUMMARY")return 1.0;return runCatching{val root=JSONObject(getYahoo("https://query1.finance.yahoo.com/v8/finance/chart/${URLEncoder.encode("EUR${c}=X","UTF-8")}?range=1d&interval=5m"));val rate=root.getJSONObject("chart").getJSONArray("result").getJSONObject(0).getJSONObject("meta").getDouble("regularMarketPrice");if(rate>0)1.0/rate else 1.0}.getOrDefault(1.0)}
- private fun tagText(xml:String,tag:String)=Regex("<$tag>(.*?)</$tag>",RegexOption.DOT_MATCHES_ALL).find(xml)?.groupValues?.getOrNull(1)?.trim()
+data class IbkrPortfolioSnapshot(
+    val totalEur: Double,
+    val chartValues: List<Double>,
+    val reportDate: LocalDate,
+    val timeframe: PortfolioTimeframe,
+    val periodReturnPercent: Double?
+)
+
+object IbkrFlexRepository {
+    private const val PREFS = "ibkr_flex_cache"
+
+    private data class Account(
+        val from: LocalDate?,
+        val to: LocalDate,
+        var base: String = "",
+        var twr: Double? = null,
+        var twrRows: Int = 0,
+        val nav: MutableMap<LocalDate, Double> = mutableMapOf()
+    )
+
+    fun refresh(context: Context, timeframe: PortfolioTimeframe = PortfolioTimeframeStore.get(context)): IbkrPortfolioSnapshot {
+        val credentials = BrokerConnectionStore.ibkrFlexCredentials(context) ?: error("Token Flex ou Query ID absent")
+        val snapshot = summarize(IbkrFlexClient.statement(context, credentials), timeframe, LocalDate.now())
+        synchronized(BrokerConnectionStore) {
+            require(BrokerConnectionStore.ibkrFlexCredentials(context) == credentials) { "Connexion IBKR modifiée" }
+            if (cached(context)?.reportDate?.isAfter(snapshot.reportDate) != true) {
+                val json = JSONObject().put("total", snapshot.totalEur).put("date", snapshot.reportDate.toString())
+                    .put("timeframe", snapshot.timeframe.name).put("twr", snapshot.periodReturnPercent)
+                    .put("chart", JSONArray(snapshot.chartValues))
+                prefs(context).edit().putString("snapshot", json.toString()).apply()
+            }
+            BrokerConnectionStore.setIbkrVerified(context, true)
+        }
+        return snapshot
+    }
+
+    internal fun summarize(xml: String, timeframe: PortfolioTimeframe, today: LocalDate): IbkrPortfolioSnapshot {
+        val accounts = linkedMapOf<String, Account>()
+        var account: Account? = null
+        readFlex(xml) { tag, attrs ->
+            when (tag) {
+                "FlexStatement" -> {
+                    val to = flexDate(attrs["toDate"]) ?: error("Date du relevé IBKR absente")
+                    val id = attrs["accountId"].orEmpty()
+                    val current = Account(flexDate(attrs["fromDate"]), to)
+                    require(accounts.put(id, current) == null) { "Compte IBKR dupliqué dans le relevé" }
+                    account = current
+                }
+                "AccountInformation" -> account?.base = attrs["currency"].orEmpty()
+                "ChangeInNAV" -> account?.let {
+                    it.twrRows++
+                    it.twr = attrs.flexNumber("twr")
+                }
+                "EquitySummaryByReportDateInBase", "EquitySummaryByReportDateInBaseCurrency" -> account?.let {
+                    val date = flexDate(attrs["reportDate"]) ?: return@let
+                    val amount = attrs.flexNumber("total") ?: return@let
+                    val currency = attrs["currency"].orEmpty().ifBlank { it.base }
+                    val eur = flexAmountInEur(amount, currency, it.base, attrs)
+                        ?: error("Valeur nette IBKR en $currency · conversion EUR indisponible")
+                    val previous = it.nav.put(date, eur)
+                    require(previous == null || previous == eur) { "NAV IBKR ambiguë pour le $date" }
+                }
+            }
+        }
+        require(accounts.isNotEmpty() && accounts.values.all { it.nav.isNotEmpty() }) {
+            "Ajoutez NAV in Base Currency, Account Information et leurs champs à la Flex Query"
+        }
+        val commonDates = accounts.values.map { it.nav.keys.toSet() }.reduce { a, b -> a intersect b }
+            .filter { it <= today && accounts.values.all { account -> it <= account.to } }.sorted()
+        val date = commonDates.lastOrNull() ?: error("Aucune date de valorisation commune aux comptes IBKR")
+        val total = accounts.values.sumOf { it.nav.getValue(date) }
+        val start = when (timeframe) {
+            PortfolioTimeframe.SESSION -> date.minusDays(7)
+            PortfolioTimeframe.MONTH -> today.minusMonths(1)
+            PortfolioTimeframe.THREE_MONTHS -> today.minusMonths(3)
+            PortfolioTimeframe.YTD -> today.withDayOfYear(1)
+            PortfolioTimeframe.YEAR -> today.minusYears(1)
+        }
+        val chart = commonDates.filter { it >= start }.map { day -> accounts.values.sumOf { it.nav.getValue(day) } }
+        val single = accounts.values.singleOrNull()
+        val expectedFrom = if (timeframe == PortfolioTimeframe.SESSION) date else start
+        val twr = single?.takeIf { it.twrRows == 1 && it.from == expectedFrom && it.to == date }?.twr
+        return IbkrPortfolioSnapshot(total, chart, date, timeframe, twr)
+    }
+
+    fun cached(context: Context): IbkrPortfolioSnapshot? = runCatching {
+        val json = JSONObject(prefs(context).getString("snapshot", null) ?: return null)
+        val chart = json.getJSONArray("chart")
+        IbkrPortfolioSnapshot(
+            json.getDouble("total"), List(chart.length()) { chart.getDouble(it) },
+            LocalDate.parse(json.getString("date")), PortfolioTimeframe.valueOf(json.getString("timeframe")),
+            if (json.isNull("twr")) null else json.getDouble("twr")
+        )
+    }.getOrNull()
+
+    fun clear(context: Context) { prefs(context).edit().clear().apply() }
+
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }

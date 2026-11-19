@@ -9,10 +9,11 @@ import java.nio.charset.StandardCharsets
 
 data class MarketData(
     val price: Double,
-    val change: Double,
-    val changePercent: Double,
+    val change: Double?,
+    val changePercent: Double?,
     val candles: List<Float>,
-    val updatedAtMillis: Long = System.currentTimeMillis()
+    val quotedAtMillis: Long?
+
 )
 
 object MarketRepository {
@@ -30,7 +31,7 @@ object MarketRepository {
             WidgetAssetConfig.TF_1Y -> "1y" to "1d"
             else -> "1d" to "5m"
         }
-        val endpoint = "https://query1.finance.yahoo.com/v8/finance/chart/$encoded?range=$range&interval=$interval&includePrePost=true"
+        val endpoint = "https://query1.finance.yahoo.com/v8/finance/chart/$encoded?range=$range&interval=$interval&includePrePost=false"
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
@@ -47,21 +48,23 @@ object MarketRepository {
             val meta = result.getJSONObject("meta")
             val quote = result.getJSONObject("indicators").getJSONArray("quote").getJSONObject(0)
             val closes = quote.getJSONArray("close")
-            val candles = buildList {
-                for (i in 0 until closes.length()) if (!closes.isNull(i)) add(closes.getDouble(i).toFloat())
+            val times = result.optJSONArray("timestamp")
+            val points = (0 until closes.length()).mapNotNull { index ->
+                val close = closes.optDouble(index).takeIf { it.isFinite() && it.toFloat().isFinite() }
+                close?.let { it to (times?.optLong(index)?.takeIf { seconds -> seconds > 0 }?.times(1000L)) }
             }
-            if (candles.isEmpty()) throw IllegalStateException("No candles returned")
-            val price = if (meta.has("regularMarketPrice") && !meta.isNull("regularMarketPrice")) meta.getDouble("regularMarketPrice") else candles.last().toDouble()
+            require(points.isNotEmpty()) { "Aucune clôture disponible" }
+            val marketPrice = meta.optDouble("regularMarketPrice").takeIf(Double::isFinite)
+            val price = marketPrice ?: points.last().first
+            val quotedAt = if (marketPrice != null) {
+                meta.optLong("regularMarketTime").takeIf { it > 0 }?.times(1000L)
+            } else points.last().second
             val baseline = if (timeframe == WidgetAssetConfig.TF_1D) {
-                when {
-                    meta.has("chartPreviousClose") && !meta.isNull("chartPreviousClose") -> meta.getDouble("chartPreviousClose")
-                    meta.has("previousClose") && !meta.isNull("previousClose") -> meta.getDouble("previousClose")
-                    else -> candles.first().toDouble()
-                }
-            } else candles.first().toDouble()
-            val change = price - baseline
-            val changePercent = if (baseline != 0.0) change / baseline * 100.0 else 0.0
-            return MarketData(price, change, changePercent, candles, System.currentTimeMillis())
+                sequenceOf("chartPreviousClose", "previousClose").map(meta::optDouble).firstOrNull(Double::isFinite)
+            } else points.first().first.takeIf { points.size >= 2 }
+            val change = baseline?.let { price - it }
+            val percent = baseline?.takeIf { it != 0.0 }?.let { (price - it) / kotlin.math.abs(it) * 100.0 }
+            return MarketData(price, change, percent, points.map { it.first.toFloat() }, quotedAt)
                 .also { save(context, symbol, timeframe, it) }
         } finally { connection.disconnect() }
     }
@@ -76,10 +79,10 @@ object MarketRepository {
         if (candles.isEmpty()) return null
         return MarketData(
             price = Double.fromBits(prefs.getLong("price_$key", 0L)),
-            change = Double.fromBits(prefs.getLong("change_$key", 0L)),
-            changePercent = Double.fromBits(prefs.getLong("changePercent_$key", 0L)),
+            change = Double.fromBits(prefs.getLong("change_$key", Double.NaN.toBits())).takeIf(Double::isFinite),
+            changePercent = Double.fromBits(prefs.getLong("changePercent_$key", Double.NaN.toBits())).takeIf(Double::isFinite),
             candles = candles,
-            updatedAtMillis = prefs.getLong("updatedAt_$key", 0L)
+            quotedAtMillis = prefs.getLong("quotedAt_$key", 0L).takeIf { it > 0 }
         )
     }
 
@@ -87,12 +90,12 @@ object MarketRepository {
         val key = safeKey("${symbol}_$timeframe")
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putLong("price_$key", data.price.toBits())
-            .putLong("change_$key", data.change.toBits())
-            .putLong("changePercent_$key", data.changePercent.toBits())
+            .putLong("change_$key", (data.change ?: Double.NaN).toBits())
+            .putLong("changePercent_$key", (data.changePercent ?: Double.NaN).toBits())
             .putString("candles_$key", data.candles.joinToString(","))
-            .putLong("updatedAt_$key", data.updatedAtMillis)
+            .putLong("quotedAt_$key", data.quotedAtMillis ?: 0L)
             .apply()
     }
 
-    private fun safeKey(symbol: String): String = symbol.replace(Regex("[^A-Za-z0-9_-]"), "_")
+    private fun safeKey(symbol: String): String = "v2_$symbol"
 }

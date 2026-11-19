@@ -16,12 +16,12 @@ class WidgetRefreshWorker(
         val requests = ids.map {
             WidgetAssetConfig.symbol(applicationContext, it) to WidgetAssetConfig.timeframe(applicationContext, it)
         }.distinct()
-        var success = false
+        var failed = false
         requests.forEach { (symbol, timeframe) ->
             runCatching { MarketRepository.fetchAndCache(applicationContext, symbol, timeframe) }
-                .onSuccess { success = true }
+                .onFailure { failed = true }
         }
         NasdaqWidgetProvider.updateAll(applicationContext)
-        return if (success || requests.isEmpty()) Result.success() else Result.retry()
+        return if (failed && runAttemptCount < 2) Result.retry() else Result.success()
     }
 }

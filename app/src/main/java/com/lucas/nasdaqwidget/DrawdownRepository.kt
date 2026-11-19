@@ -27,7 +27,9 @@ object DrawdownRepository {
         return if (cached == null || now - cached.fullRefreshAtMillis >= FULL_REFRESH_MS) {
             fetchFullHistory(context, symbol)
         } else {
-            val current = MarketRepository.fetchAndCache(context, symbol).price
+            val quote = MarketRepository.fetchAndCache(context, symbol)
+            val current = quote.price
+            require(current.isFinite() && current > 0) { "Cours indisponible" }
             val ath = max(cached.athPrice, current)
             save(
                 context,
@@ -36,7 +38,7 @@ object DrawdownRepository {
                     currentPrice = current,
                     athPrice = ath,
                     drawdownPercent = drawdown(current, ath),
-                    updatedAtMillis = now,
+                    updatedAtMillis = quote.quotedAtMillis ?: 0L,
                     fullRefreshAtMillis = cached.fullRefreshAtMillis
                 )
             )
@@ -46,7 +48,7 @@ object DrawdownRepository {
     private fun fetchFullHistory(context: Context, symbol: String): DrawdownSnapshot {
         val encoded = URLEncoder.encode(symbol, StandardCharsets.UTF_8.toString())
         val endpoint = "https://query1.finance.yahoo.com/v8/finance/chart/$encoded" +
-            "?range=max&interval=1wk&includePrePost=false&includeAdjustedClose=true"
+            "?range=max&interval=1wk&includePrePost=false&includeAdjustedClose=false"
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 15_000
@@ -69,51 +71,25 @@ object DrawdownRepository {
             val quote = indicators.getJSONArray("quote").getJSONObject(0)
             val highs = quote.getJSONArray("high")
             val closes = quote.optJSONArray("close")
-            val adjClose = indicators.optJSONArray("adjclose")?.optJSONObject(0)?.optJSONArray("adjclose")
 
-            var ath = Double.NEGATIVE_INFINITY
-            for (i in 0 until highs.length()) {
-                if (highs.isNull(i)) continue
-                val high = highs.optDouble(i, Double.NaN)
-                if (!high.isFinite() || high <= 0.0) continue
+            // Yahoo OHLC déjà ajusté des splits. Adj Close tient aussi compte des dividendes.
+            var ath = (0 until highs.length()).map { highs.optDouble(it) }
+                .filter { it.isFinite() && it > 0 }.maxOrNull() ?: error("Sommet indisponible")
 
-                // Adjust historical highs for stock splits when Yahoo provides adjusted close.
-                val adjustedHigh = if (
-                    closes != null && adjClose != null &&
-                    i < closes.length() && i < adjClose.length() &&
-                    !closes.isNull(i) && !adjClose.isNull(i)
-                ) {
-                    val close = closes.optDouble(i, Double.NaN)
-                    val adjusted = adjClose.optDouble(i, Double.NaN)
-                    if (close.isFinite() && adjusted.isFinite() && close > 0.0) high * (adjusted / close) else high
-                } else high
-
-                if (adjustedHigh.isFinite()) ath = max(ath, adjustedHigh)
+            val marketPrice = meta.optDouble("regularMarketPrice").takeIf { it.isFinite() && it > 0 }
+            val lastIndex = closes?.let { values ->
+                (values.length() - 1 downTo 0).firstOrNull { values.optDouble(it).let { price -> price.isFinite() && price > 0 } }
             }
-            if (!ath.isFinite() || ath <= 0.0) throw IllegalStateException("ATH unavailable")
-
-            val current = when {
-                meta.has("regularMarketPrice") && !meta.isNull("regularMarketPrice") -> meta.getDouble("regularMarketPrice")
-                closes != null -> {
-                    var last: Double? = null
-                    for (i in closes.length() - 1 downTo 0) {
-                        if (!closes.isNull(i)) {
-                            last = closes.optDouble(i, Double.NaN)
-                            if (last.isFinite() && last > 0.0) break
-                        }
-                    }
-                    last ?: throw IllegalStateException("Current price unavailable")
-                }
-                else -> throw IllegalStateException("Current price unavailable")
-            }
-
+            val current = marketPrice ?: lastIndex?.let { closes?.optDouble(it) } ?: error("Cours indisponible")
+            val timestamp = if (marketPrice != null) meta.optLong("regularMarketTime") else
+                lastIndex?.let { result.optJSONArray("timestamp")?.optLong(it) } ?: 0L
             ath = max(ath, current)
             val now = System.currentTimeMillis()
             val snapshot = DrawdownSnapshot(
                 currentPrice = current,
                 athPrice = ath,
                 drawdownPercent = drawdown(current, ath),
-                updatedAtMillis = now,
+                updatedAtMillis = timestamp * 1000L,
                 fullRefreshAtMillis = now
             )
             save(context, symbol, snapshot)
@@ -154,5 +130,5 @@ object DrawdownRepository {
     private fun drawdown(current: Double, ath: Double): Double =
         if (ath > 0.0) (current / ath - 1.0) * 100.0 else 0.0
 
-    private fun safeKey(symbol: String): String = symbol.replace(Regex("[^A-Za-z0-9_-]"), "_")
+    private fun safeKey(symbol: String): String = "v2_$symbol"
 }

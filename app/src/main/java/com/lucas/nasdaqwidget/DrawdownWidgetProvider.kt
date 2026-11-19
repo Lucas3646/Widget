@@ -18,6 +18,8 @@ import androidx.work.WorkManager
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
+import java.util.Date
+import java.text.SimpleDateFormat
 import java.util.concurrent.TimeUnit
 
 class DrawdownWidgetProvider : AppWidgetProvider() {
@@ -73,7 +75,9 @@ class DrawdownWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.drawdownValue, "${pctFormat.format(dd)}%")
                 views.setTextColor(R.id.drawdownValue, valueColor)
                 views.setTextViewText(R.id.drawdownAth, "ATH ${priceFormat.format(snapshot.athPrice)}")
-                views.setTextViewText(R.id.drawdownCurrent, "Actuel ${priceFormat.format(snapshot.currentPrice)}")
+                val at = snapshot.updatedAtMillis.takeIf { it > 0 }
+                    ?.let { SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE).format(Date(it)) }
+                views.setTextViewText(R.id.drawdownCurrent, "${priceFormat.format(snapshot.currentPrice)} · ${at ?: "cours non horodaté"}")
             }
 
             val configureIntent = Intent(context, DrawdownWidgetConfigureActivity::class.java).apply {

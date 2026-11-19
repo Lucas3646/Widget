@@ -3,6 +3,8 @@ name: Build Android APK
 on:
   push:
     branches: [ main ]
+  pull_request:
+    paths: [ "app/**", "**.gradle.kts", ".github/workflows/build-apk.yml" ]
   workflow_dispatch:
 
 jobs:
@@ -24,7 +26,7 @@ jobs:
           gradle-version: '8.13'
 
       - name: Build debug APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug testDebugUnitTest
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

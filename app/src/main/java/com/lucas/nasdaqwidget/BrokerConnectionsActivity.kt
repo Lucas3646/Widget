@@ -87,12 +87,12 @@ class BrokerConnectionsActivity : AppCompatActivity() {
         }
         root.addView(krakenReconfigure)
         root.addView(Button(this).apply { text="ACTUALISER KRAKEN"; setOnClickListener { isEnabled=false; Thread { val r=runCatching{KrakenPortfolioRepository.refresh(this@BrokerConnectionsActivity)}; runOnUiThread { isEnabled=true; if(r.isSuccess){PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);Toast.makeText(this@BrokerConnectionsActivity,"Kraken actualisé",Toast.LENGTH_SHORT).show()}else Toast.makeText(this@BrokerConnectionsActivity,r.exceptionOrNull()?.message?:"Erreur Kraken",Toast.LENGTH_LONG).show();refreshStatus() } }.start() } })
-        root.addView(Button(this).apply { text="SUPPRIMER KRAKEN"; setOnClickListener { BrokerConnectionStore.clearKraken(this@BrokerConnectionsActivity);KrakenPortfolioRepository.clear(this@BrokerConnectionsActivity);PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);refreshStatus();updateCredentialFields() } })
+        root.addView(Button(this).apply { text="SUPPRIMER KRAKEN"; setOnClickListener { BrokerConnectionStore.clearKraken(this@BrokerConnectionsActivity);PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);refreshStatus();updateCredentialFields() } })
 
         root.addView(TextView(this).apply { text="INTERACTIVE BROKERS · FLEX"; textSize=18f;setTextColor(Color.WHITE);setTypeface(typeface,Typeface.BOLD);setPadding(0,dp(26),0,0) })
         ibkrStatus=statusText();root.addView(ibkrStatus)
         root.addView(TextView(this).apply {
-            text="La Flex Query fournit positions + dividendes. Market Widgets actualise ensuite les prix de marché. Une fois Token + Query ID enregistrés, tu n’as plus à les saisir."
+            text="Format XML · choisissez Depuis le début de l’année. Ajoutez Account Information, NAV in Base Currency, Cash Transactions (détail) et Open Dividend Accruals."
             textSize=13f;setTextColor(Color.rgb(142,160,178));setPadding(0,dp(6),0,dp(8))
         })
         flexToken = EditText(this).apply { hint="Flex Web Service Token";setTextColor(Color.WHITE);setHintTextColor(Color.GRAY);setSingleLine(true);inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
@@ -109,9 +109,22 @@ class BrokerConnectionsActivity : AppCompatActivity() {
                     val dividends=runCatching{IbkrDividendRepository.refresh(this@BrokerConnectionsActivity)}
                     runOnUiThread {
                         isEnabled=true;text="CONNECTER IBKR"
-                        if(r.isSuccess){ flexToken.text.clear(); queryId.text.clear(); PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity); DividendWidgetProvider.updateAll(this@BrokerConnectionsActivity); val total=NumberFormat.getCurrencyInstance(Locale.FRANCE).format(r.getOrThrow().totalEur); Toast.makeText(this@BrokerConnectionsActivity,"IBKR connecté · $total",Toast.LENGTH_LONG).show() }
-                        else { BrokerConnectionStore.setIbkrVerified(this@BrokerConnectionsActivity,false); Toast.makeText(this@BrokerConnectionsActivity,"Connexion IBKR refusée : ${r.exceptionOrNull()?.message}",Toast.LENGTH_LONG).show() }
-                        if (dividends.isFailure) DividendWidgetProvider.updateAll(this@BrokerConnectionsActivity)
+                        if (r.isSuccess || dividends.isSuccess) {
+                            flexToken.text.clear()
+                            queryId.text.clear()
+                        }
+                        val portfolioMessage = r.fold(
+                            onSuccess = { "Portefeuille · relevé du ${it.reportDate}" },
+                            onFailure = { "Portefeuille · ${ibkrMessage(it)}" }
+                        )
+                        Toast.makeText(this@BrokerConnectionsActivity, portfolioMessage, Toast.LENGTH_LONG).show()
+                        PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity)
+                        DividendWidgetProvider.updateAll(this@BrokerConnectionsActivity)
+                        val dividendIssue = dividends.exceptionOrNull()?.let(::ibkrMessage)
+                            ?: dividends.getOrNull()?.let(::dividendCoverage)
+                        if (dividendIssue != null) {
+                            Toast.makeText(this@BrokerConnectionsActivity, "Dividendes · $dividendIssue", Toast.LENGTH_LONG).show()
+                        }
                         refreshStatus(); updateCredentialFields()
                     }
                 }.start()
@@ -129,22 +142,41 @@ class BrokerConnectionsActivity : AppCompatActivity() {
                 isEnabled=false
                 Thread {
                     val r=runCatching{IbkrFlexRepository.refresh(this@BrokerConnectionsActivity)}
-                    runCatching{IbkrDividendRepository.refresh(this@BrokerConnectionsActivity)}
+                    val dividends = runCatching { IbkrDividendRepository.refresh(this@BrokerConnectionsActivity) }
                     runOnUiThread {
                         isEnabled=true
-                        if(r.isSuccess){PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);DividendWidgetProvider.updateAll(this@BrokerConnectionsActivity);Toast.makeText(this@BrokerConnectionsActivity,"IBKR + dividendes actualisés",Toast.LENGTH_SHORT).show()}
-                        else Toast.makeText(this@BrokerConnectionsActivity,r.exceptionOrNull()?.message?:"Erreur IBKR",Toast.LENGTH_LONG).show()
+                        PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity)
+                        DividendWidgetProvider.updateAll(this@BrokerConnectionsActivity)
+                        val messages = listOfNotNull(
+                            r.exceptionOrNull()?.let { "Portefeuille · ${ibkrMessage(it)}" },
+                            dividends.exceptionOrNull()?.let { "Dividendes · ${ibkrMessage(it)}" },
+                            dividends.getOrNull()?.let(::dividendCoverage)
+                        )
+                        Toast.makeText(this@BrokerConnectionsActivity, messages.joinToString("\n").ifEmpty {
+                            "Relevé du ${r.getOrNull()?.reportDate} chargé"
+                        }, Toast.LENGTH_LONG).show()
                         refreshStatus()
                     }
                 }.start()
             }
         })
-        root.addView(Button(this).apply { text="SUPPRIMER IBKR";setOnClickListener { BrokerConnectionStore.clearIbkr(this@BrokerConnectionsActivity);IbkrFlexRepository.clear(this@BrokerConnectionsActivity);IbkrDividendRepository.clear(this@BrokerConnectionsActivity);PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);DividendWidgetProvider.updateAll(this@BrokerConnectionsActivity);refreshStatus();updateCredentialFields() } })
-        root.addView(TextView(this).apply { text="Le widget portefeuille se rafraîchit automatiquement. Pour les dividendes, une actualisation IBKR recharge aussi les données du widget dividende.";textSize=12f;setTextColor(Color.rgb(142,160,178));gravity=Gravity.START;setPadding(0,dp(8),0,0) })
+        root.addView(Button(this).apply { text="SUPPRIMER IBKR";setOnClickListener { BrokerConnectionStore.clearIbkr(this@BrokerConnectionsActivity);PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);DividendWidgetProvider.updateAll(this@BrokerConnectionsActivity);refreshStatus();updateCredentialFields() } })
+        root.addView(TextView(this).apply { text="IBKR actualise ses relevés après la clôture. Les dates affichées dans les widgets indiquent le relevé ou l’heure de valorisation utilisée.";textSize=12f;setTextColor(Color.rgb(142,160,178));gravity=Gravity.START;setPadding(0,dp(8),0,0) })
 
         setContentView(ScrollView(this).apply { addView(root) })
         refreshStatus(); updateCredentialFields()
     }
+
+    private fun dividendCoverage(snapshot: IbkrDividendSnapshot): String? = when {
+        !snapshot.hasCashSection -> "Ajoutez la section Cash Transactions"
+        !snapshot.hasAccrualSection -> "Ajoutez la section Open Dividend Accruals"
+        snapshot.receivedYtdEur == null -> "Cumul incomplet · vérifiez la période depuis le 1er janvier et les champs de devise"
+        snapshot.accruedEur == null -> "Montant à recevoir incomplet · vérifiez les champs de date, montant et devise"
+        else -> null
+    }
+
+    private fun ibkrMessage(error: Throwable): String =
+        if (error is InterruptedException) "Actualisation interrompue" else error.message ?: "Relevé indisponible"
 
     private fun statusText()=TextView(this).apply{textSize=14f;setPadding(0,6,0,10)}
 

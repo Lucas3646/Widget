@@ -69,10 +69,15 @@ class NasdaqWidgetProvider : AppWidgetProvider() {
                 val priceFormat = DecimalFormat("#,##0.00", symbols)
                 val signed = DecimalFormat("+0.00;-0.00", symbols)
                 views.setTextViewText(R.id.priceText, priceFormat.format(data.price))
-                views.setTextViewText(R.id.changePercentText, "${signed.format(data.changePercent)}%")
-                views.setTextViewText(R.id.changePointsText, signed.format(data.change))
-                views.setTextViewText(R.id.updatedText, "$timeframe · MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(data.updatedAtMillis))} · toucher")
-                val trendColor = if (data.change >= 0) Color.rgb(56, 242, 122) else Color.rgb(255, 82, 82)
+                views.setTextViewText(R.id.changePercentText, data.changePercent?.let { "${signed.format(it)}%" } ?: "— %")
+                views.setTextViewText(R.id.changePointsText, data.change?.let(signed::format) ?: "—")
+                val timestamp = data.quotedAtMillis?.let { SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE).format(Date(it)) }
+                views.setTextViewText(R.id.updatedText, timestamp?.let { "COURS · $it" } ?: "COURS NON HORODATÉ")
+                val trendColor = when {
+                    data.change == null -> Color.rgb(142, 160, 178)
+                    data.change >= 0 -> Color.rgb(56, 242, 122)
+                    else -> Color.rgb(255, 82, 82)
+                }
                 views.setTextColor(R.id.changePercentText, trendColor)
                 views.setTextColor(R.id.changePointsText, trendColor)
                 views.setImageViewBitmap(R.id.chartImage, ChartRenderer.render(data.candles))

@@ -2,6 +2,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:id="@+id/dividendRoot"
     android:orientation="vertical"
     android:padding="11dp"
     android:background="@drawable/widget_background">
@@ -74,7 +75,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="REÇU YTD" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="7sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="BRUT YTD" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="7sp" />
             <TextView android:id="@+id/dividendReceivedYtd" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="— €" android:textColor="#38F27A" android:textStyle="bold" android:textSize="11sp" android:maxLines="1" />
         </LinearLayout>
 
@@ -83,7 +84,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="RESTANT" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="7sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="À RECEVOIR" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="7sp" />
             <TextView android:id="@+id/dividendRemaining" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="— €" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="11sp" android:maxLines="1" />
         </LinearLayout>
     </LinearLayout>

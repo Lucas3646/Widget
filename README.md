@@ -14,7 +14,23 @@ Widget Android natif pour afficher le NASDAQ 100 directement sur l'écran d'accu
 
 ## État des données
 
-La première version utilise volontairement un flux de démonstration pour valider le rendu et l'installation. Le fournisseur de données live est isolé dans `MarketData.kt` et sera remplacé par une API de marché gratuite après validation du build.
+Le widget de cotation Android utilise Yahoo Finance et affiche l’horodatage du cours. Le drawdown compare ce cours au plus haut des cours historiques hors réinvestissement des dividendes.
+
+### Configuration IBKR sur Android
+
+Dans Client Portal, réglez l’**Activity Flex Query** sur **XML**, date ISO et période **Depuis le début de l’année** pour les dividendes. Dans les sections suivantes, conservez au minimum les champs indiqués.
+
+| Section | Champs nécessaires |
+| --- | --- |
+| Account Information | Devise de base |
+| Net Asset Value (NAV) in Base Currency | Date du relevé, devise et total de la valeur nette |
+| Cash Transactions | Type, date/heure, montant, symbole, devise et FX Rate to Base. Utilisez les transactions détaillées. |
+| Open Dividend Accruals | Symbole, devise, date de paiement, montant net et FX Rate to Base |
+| Change in NAV | TWR, facultatif. Le rendement s’affiche pour la période exacte du relevé d’un seul compte. |
+
+Le montant IBKR correspond à la valeur nette datée du relevé, avec le cash et les droits à dividende comptabilisés par le courtier. Le graphique reprend les relevés IBKR. Les soldes Kraken sont revalorisés aux cours et la variation Kraken représente l’effet des cours sur les soldes courants depuis l’ouverture de la journée UTC. Les deux courtiers ont des dates et des méthodes de calcul distinctes.
+
+Le cumul des dividendes est brut et tient compte des corrections signées. Le montant à recevoir correspond aux droits IBKR encore ouverts, y compris les paiements en attente après leur date prévue. Les montants en EUR s’affichent si la devise est l’euro ou si le relevé donne un taux de conversion vers une devise de base EUR.
 
 ## Installation depuis GitHub
 
