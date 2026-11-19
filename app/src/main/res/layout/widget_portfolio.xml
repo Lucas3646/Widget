@@ -13,6 +13,8 @@
         <TextView android:id="@+id/portfolioTotal" android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:text="— €" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="25sp" />
         <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="end">
+            <TextView android:id="@+id/portfolioTotalLabel" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:textColor="#F1B043" android:textSize="10sp" android:visibility="gone" />
             <TextView android:id="@+id/portfolioDayChange" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="— €" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="12sp" />
             <TextView android:id="@+id/portfolioDayPercent" android:layout_width="wrap_content" android:layout_height="wrap_content"

@@ -86,7 +86,7 @@ class BrokerConnectionsActivity : AppCompatActivity() {
             setOnClickListener { krakenKey.visibility=View.VISIBLE; krakenSecret.visibility=View.VISIBLE; krakenConnect.visibility=View.VISIBLE; visibility=View.GONE }
         }
         root.addView(krakenReconfigure)
-        root.addView(Button(this).apply { text="ACTUALISER KRAKEN"; setOnClickListener { isEnabled=false; Thread { val r=runCatching{KrakenPortfolioRepository.refresh(this@BrokerConnectionsActivity)}; runOnUiThread { isEnabled=true; if(r.isSuccess){PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);Toast.makeText(this@BrokerConnectionsActivity,"Kraken actualisé",Toast.LENGTH_SHORT).show()}else Toast.makeText(this@BrokerConnectionsActivity,r.exceptionOrNull()?.message?:"Erreur Kraken",Toast.LENGTH_LONG).show();refreshStatus() } }.start() } })
+        root.addView(Button(this).apply { text="ACTUALISER KRAKEN"; setOnClickListener { isEnabled=false; Thread { val r=runCatching{KrakenPortfolioRepository.refresh(this@BrokerConnectionsActivity)}; runOnUiThread { isEnabled=true; if(r.isSuccess){PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);Toast.makeText(this@BrokerConnectionsActivity,"Kraken actualisé",Toast.LENGTH_SHORT).show()}else Toast.makeText(this@BrokerConnectionsActivity,KrakenPortfolioRepository.lastError(this@BrokerConnectionsActivity)?:"Erreur Kraken",Toast.LENGTH_LONG).show();PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);refreshStatus() } }.start() } })
         root.addView(Button(this).apply { text="SUPPRIMER KRAKEN"; setOnClickListener { BrokerConnectionStore.clearKraken(this@BrokerConnectionsActivity);PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity);refreshStatus();updateCredentialFields() } })
 
         root.addView(TextView(this).apply { text="INTERACTIVE BROKERS · FLEX"; textSize=18f;setTextColor(Color.WHITE);setTypeface(typeface,Typeface.BOLD);setPadding(0,dp(26),0,0) })
@@ -196,8 +196,22 @@ class BrokerConnectionsActivity : AppCompatActivity() {
 
     private fun refreshStatus(){
         val green=Color.rgb(56,242,122);val amber=Color.rgb(241,176,67);val muted=Color.rgb(142,160,178)
-        val hasKraken=BrokerConnectionStore.hasKraken(this);val krakenVerified=BrokerConnectionStore.isKrakenVerified(this);val kc=KrakenPortfolioRepository.cached(this)
-        krakenStatus.text=when{krakenVerified&&kc!=null->"● Connecté · ${NumberFormat.getCurrencyInstance(Locale.FRANCE).format(kc.totalEur)}";hasKraken->"◐ Identifiants enregistrés · vérification nécessaire";else->"○ Non connecté"};krakenStatus.setTextColor(if(krakenVerified)green else if(hasKraken)amber else muted)
+        val hasKraken = BrokerConnectionStore.hasKraken(this)
+        val kraken = KrakenPortfolioRepository.cached(this)
+        val krakenError = KrakenPortfolioRepository.lastError(this)
+        krakenStatus.text = when {
+            !hasKraken -> "○ Non connecté"
+            krakenError != null -> "◐ $krakenError"
+            kraken != null && kraken.unpricedAssets.isNotEmpty() ->
+                "◐ Cours EUR indisponible · ${kraken.unpricedAssets.joinToString()}"
+            kraken != null -> "● Connecté · ${NumberFormat.getCurrencyInstance(Locale.FRANCE).format(kraken.totalEur)}"
+            else -> "◐ Identifiants enregistrés · actualisation requise"
+        }
+        krakenStatus.setTextColor(when {
+            !hasKraken -> muted
+            krakenError != null || kraken == null || kraken.unpricedAssets.isNotEmpty() -> amber
+            else -> green
+        })
         val hasIbkr=BrokerConnectionStore.hasIbkrSetup(this);val ibkrVerified=BrokerConnectionStore.isIbkrVerified(this);val ic=IbkrFlexRepository.cached(this)
         ibkrStatus.text=when{ibkrVerified&&ic!=null->"● Connecté · ${NumberFormat.getCurrencyInstance(Locale.FRANCE).format(ic.totalEur)}";hasIbkr->"◐ Token + Query ID enregistrés";else->"○ Non connecté"};ibkrStatus.setTextColor(if(ibkrVerified)green else if(hasIbkr)amber else muted)
     }

@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
+import android.view.View
 import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -63,9 +64,12 @@ class DividendWidgetProvider : AppWidgetProvider() {
                 !connected -> "IBKR non connecté"
                 snapshot == null -> "Relevé indisponible"
                 payment != null -> snapshot.symbol?.ifBlank { "IBKR" } ?: "IBKR"
-                snapshot.accruedEur == 0.0 -> "Aucun dividende"
-                else -> "Aucune date"
+                snapshot.accruedEur == 0.0 -> "Rien en attente"
+                else -> "Date indisponible"
             })
+            views.setViewVisibility(R.id.dividendCountdown, if (days != null && days >= 0) View.VISIBLE else View.GONE)
+            views.setViewVisibility(R.id.dividendAmount, if (amount != null) View.VISIBLE else View.GONE)
+            views.setViewVisibility(R.id.dividendDate, if (payment != null || !connected) View.VISIBLE else View.GONE)
             views.setTextViewText(R.id.dividendCountdown, if (days != null && days >= 0) "J-$days" else "—")
             views.setTextViewText(R.id.dividendAmount, amount ?: "—")
             views.setTextViewText(R.id.dividendDate, when {

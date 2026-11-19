@@ -55,21 +55,30 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
             val period = PortfolioTimeframeStore.get(context)
             val eur = NumberFormat.getCurrencyInstance(Locale.FRANCE)
             val compactEur = NumberFormat.getCurrencyInstance(Locale.FRANCE).apply { maximumFractionDigits = 0 }
-            val total = if ((!hasKraken || kraken != null) && (!hasIbkr || ibkr != null) && (hasKraken || hasIbkr)) {
-                (kraken?.totalEur ?: 0.0) + (ibkr?.totalEur ?: 0.0)
-            } else null
+            val krakenTotal = kraken?.availableTotalEur
+            val total = listOfNotNull(krakenTotal, ibkr?.totalEur).takeIf { it.isNotEmpty() }?.sum()
+            val totalLabel = when {
+                total == null -> ""
+                hasKraken && krakenTotal == null -> "IBKR seul"
+                hasIbkr && ibkr == null && kraken?.unpricedAssets.isNullOrEmpty() -> "Kraken seul"
+                !kraken?.unpricedAssets.isNullOrEmpty() -> "Total partiel"
+                else -> ""
+            }
+            val krakenError = if (hasKraken) KrakenPortfolioRepository.lastError(context) else null
             val chart = ibkr?.takeIf { it.timeframe == period }?.chartValues.orEmpty()
             val krakenTime = kraken?.let { Instant.ofEpochMilli(it.updatedAt) }
             val krakenRecent = krakenTime != null && System.currentTimeMillis() - krakenTime.toEpochMilli() in 0..TimeUnit.MINUTES.toMillis(30)
             val krakenToday = krakenTime?.atZone(ZoneOffset.UTC)?.toLocalDate() == LocalDate.now(ZoneOffset.UTC)
             val showKrakenDay = period == PortfolioTimeframe.SESSION && krakenRecent && krakenToday
-            val ranked = if (showKrakenDay) kraken?.positions.orEmpty().sortedByDescending { it.dayChangePercent } else emptyList()
+            val ranked = if (showKrakenDay) kraken?.positions.orEmpty().filter { it.dayChangePercent.isFinite() }.sortedByDescending { it.dayChangePercent } else emptyList()
             val krakenPercent = kraken?.dayChangePercent?.takeIf { !hasIbkr && showKrakenDay && it.isFinite() }
             val ibkrPercent = ibkr?.takeIf { !hasKraken && it.timeframe == period }?.periodReturnPercent
 
             ids.forEach { id ->
                 val views = RemoteViews(context.packageName, R.layout.widget_portfolio)
                 views.setTextViewText(R.id.portfolioTotal, total?.let(eur::format) ?: "— €")
+                views.setTextViewText(R.id.portfolioTotalLabel, totalLabel)
+                views.setViewVisibility(R.id.portfolioTotalLabel, if (totalLabel.isEmpty()) View.GONE else View.VISIBLE)
                 val percent = ibkrPercent ?: krakenPercent
                 views.setTextViewText(R.id.portfolioDayPercent, when {
                     ibkrPercent != null -> String.format(Locale.FRANCE, "%+.2f %% · IBKR", ibkrPercent)
@@ -95,12 +104,17 @@ class PortfolioWidgetProvider : AppWidgetProvider() {
                 fill(views, listOf(R.id.portfolioFlop1, R.id.portfolioFlop2, R.id.portfolioFlop3),
                     ranked.asReversed().filter { it.dayChangePercent < 0 }, compactEur)
                 views.setTextViewText(R.id.portfolioKraken, when {
-                    kraken != null && krakenTime != null -> {
-                        val time = krakenTime.atZone(ZoneId.systemDefault()).format(quoteFormat)
-                        val stale = if (krakenRecent) "" else " · cache"
-                        "Kraken · ${eur.format(kraken.totalEur)} · $time$stale"
+                    kraken != null && kraken.unpricedAssets.isNotEmpty() -> {
+                        val part = krakenTotal?.let(eur::format)?.let { "$it · " }.orEmpty()
+                        "Kraken · ${part}${kraken.unpricedAssets.size} actif(s) sans cours"
                     }
-                    hasKraken -> "Kraken · valeur indisponible"
+                    krakenTotal != null && krakenTime != null -> {
+                        val time = krakenTime.atZone(ZoneId.systemDefault()).format(quoteFormat)
+                        val stale = if (krakenRecent && krakenError == null) "" else " · cache"
+                        "Kraken · ${eur.format(krakenTotal)} · $time$stale"
+                    }
+                    krakenError != null -> "Kraken · $krakenError"
+                    hasKraken -> "Kraken · actualisation requise"
                     else -> "Kraken · toucher pour connecter"
                 })
                 views.setTextViewText(R.id.portfolioIbkr, when {

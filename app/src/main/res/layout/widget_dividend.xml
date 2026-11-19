@@ -75,7 +75,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="BRUT YTD" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="7sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="REÇU BRUT YTD" android:textColor="#8EA0B2" android:textStyle="bold" android:textSize="7sp" />
             <TextView android:id="@+id/dividendReceivedYtd" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="— €" android:textColor="#38F27A" android:textStyle="bold" android:textSize="11sp" android:maxLines="1" />
         </LinearLayout>
 
