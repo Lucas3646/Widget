@@ -9,7 +9,7 @@ import java.net.URL
 data class MvrvSnapshot(val zScore:Double,val estimatedHighZonePrice:Double?,val sourcePrice:Double?,val updatedAtMillis:Long)
 
 object MvrvRepository {
-    private const val PREFS="btc_mvrv_snapshot"
+    private const val PREFS="btc_mvrv_snapshot_v2"
     private const val HIGH_ZONE_Z=7.0
     private val BG_BASES=listOf(
         "https://bitcoin-data.com/v1",
@@ -59,7 +59,7 @@ object MvrvRepository {
         val data=JSONObject(body).optJSONArray("data")?:error("réponse invalide")
         if(data.length()==0) error("aucune donnée $metric")
         val item=data.optJSONObject(data.length()-1)?:error("donnée invalide")
-        return item.optString(metric).toDoubleOrNull()?:error("$metric absent")
+        return item.optString(metric).toDoubleOrNull()?.takeIf(Double::isFinite) ?: error("$metric absent")
     }
 
     private fun get(endpoint:String):String {
@@ -72,17 +72,17 @@ object MvrvRepository {
 
     private fun extractMetric(body:String,preferred:Set<String>):Double? {
         val trimmed=body.trim()
-        trimmed.toDoubleOrNull()?.let{return it}
+        trimmed.toDoubleOrNull()?.takeIf(Double::isFinite)?.let{return it}
         val root:Any=runCatching{JSONObject(trimmed)}.getOrElse{runCatching{JSONArray(trimmed)}.getOrNull()?:return null}
         return findMetric(root,preferred.map{normalize(it)}.toSet())
     }
 
     private fun normalize(s:String)=s.lowercase().filter{it.isLetterOrDigit()}
-    private fun asDouble(v:Any?):Double?=when(v){is Number->v.toDouble();is String->v.replace(",","").trim().toDoubleOrNull();else->null}
+    private fun asDouble(v:Any?):Double?=(when(v){is Number->v.toDouble();is String->v.replace(",","").trim().toDoubleOrNull();else->null})?.takeIf(Double::isFinite)
     private fun findMetric(node:Any?,preferred:Set<String>):Double?=when(node){
         is JSONObject->{val keys=node.keys().asSequence().toList();keys.firstNotNullOfOrNull{k->if(normalize(k) in preferred)asDouble(node.opt(k))else null}?:keys.firstNotNullOfOrNull{k->findMetric(node.opt(k),preferred)}}
         is JSONArray->{var found:Double?=null;for(i in 0 until node.length()){found=findMetric(node.opt(i),preferred);if(found!=null)break};found}
-        else->asDouble(node)
+        else->null
     }
 
     fun cached(context:Context):MvrvSnapshot?{val p=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE);if(!p.contains("zScore"))return null;val zb=p.getLong("estimatedHighZonePrice",Long.MIN_VALUE);val pb=p.getLong("sourcePrice",Long.MIN_VALUE);return MvrvSnapshot(Double.fromBits(p.getLong("zScore",0)),if(zb==Long.MIN_VALUE)null else Double.fromBits(zb),if(pb==Long.MIN_VALUE)null else Double.fromBits(pb),p.getLong("updatedAt",0))}

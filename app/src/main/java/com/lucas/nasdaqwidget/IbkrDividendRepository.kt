@@ -1,256 +1,143 @@
 package com.lucas.nasdaqwidget
 
 import android.content.Context
-import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
-import java.io.StringReader
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
+import org.json.JSONObject
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
-import java.time.format.DateTimeFormatter
-import kotlin.math.abs
+import java.util.Locale
 
 data class IbkrDividendSnapshot(
-    val symbol: String,
-    val nextAmount: Double,
-    val nextCurrency: String,
-    val nextDateLabel: String,
-    val daysUntil: Long,
-    val receivedYtdEur: Double,
-    val remainingYearEur: Double,
-    val hasUpcoming: Boolean,
-    val estimatedUpcoming: Boolean,
-    val updatedAt: Long
-)
-
-private data class DividendRow(
-    val symbol: String,
-    val amount: Double,
-    val currency: String,
-    val date: LocalDate,
-    val upcoming: Boolean
+    val symbol: String?,
+    val nextAmount: Double?,
+    val nextCurrency: String?,
+    val paymentDate: LocalDate?,
+    val receivedYtdEur: Double?,
+    val accruedEur: Double?,
+    val reportDate: LocalDate,
+    val hasCashSection: Boolean,
+    val hasAccrualSection: Boolean
 )
 
 object IbkrDividendRepository {
     private const val PREFS = "ibkr_dividend_cache"
-    private const val BASE = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 
-    fun refresh(context: Context): IbkrDividendSnapshot? {
+    private data class Dividend(
+        val symbol: String, val amount: Double, val currency: String,
+        val date: LocalDate, val eur: Double?
+    )
+
+    fun refresh(context: Context, force: Boolean = false): IbkrDividendSnapshot {
         val credentials = BrokerConnectionStore.ibkrFlexCredentials(context)
-            ?: throw IllegalStateException("Token Flex ou Query ID absent")
-        val rows = parse(fetchStatement(credentials))
-        val today = LocalDate.now()
-        val yearStart = today.withDayOfYear(1)
-        val yearEnd = today.withMonth(12).withDayOfMonth(31)
-
-        val received = rows.filter { !it.upcoming && !it.date.isBefore(yearStart.minusYears(1)) && !it.date.isAfter(today) }
-        val receivedYtdRows = received.filter { !it.date.isBefore(yearStart) }
-        val declaredUpcoming = rows.filter { it.upcoming && !it.date.isBefore(today) && !it.date.isAfter(yearEnd) }.sortedBy { it.date }
-
-        // Many IBKR Flex reports leave OpenDividendAccruals empty even when the
-        // security has a recurring dividend. When that happens, infer the next
-        // dates from the user's own IBKR dividend payment history. This is a
-        // fallback estimate, never presented as an IBKR-declared accrual.
-        val inferredUpcoming = if (declaredUpcoming.isEmpty()) inferUpcoming(received, today, yearEnd) else emptyList()
-        val upcoming = if (declaredUpcoming.isNotEmpty()) declaredUpcoming else inferredUpcoming
-        val estimated = declaredUpcoming.isEmpty() && inferredUpcoming.isNotEmpty()
-
-        val next = upcoming.firstOrNull()
-        val receivedYtd = receivedYtdRows.sumOf { abs(it.amount) * fxToEur(it.currency) }
-        val remaining = upcoming.sumOf { abs(it.amount) * fxToEur(it.currency) }
-
-        if (next == null && receivedYtdRows.isEmpty()) {
-            cache(context, null)
-            return null
+            ?: error("Token Flex ou Query ID absent")
+        val snapshot = summarize(IbkrFlexClient.statement(context, credentials, force), LocalDate.now())
+        synchronized(BrokerConnectionStore) {
+            require(BrokerConnectionStore.ibkrFlexCredentials(context) == credentials) { "Connexion IBKR modifiée" }
+            if (cached(context)?.reportDate?.isAfter(snapshot.reportDate) != true) {
+                val json = JSONObject().put("symbol", snapshot.symbol).put("amount", snapshot.nextAmount)
+                    .put("currency", snapshot.nextCurrency).put("payment", snapshot.paymentDate?.toString())
+                    .put("received", snapshot.receivedYtdEur).put("accrued", snapshot.accruedEur)
+                    .put("date", snapshot.reportDate.toString()).put("cash", snapshot.hasCashSection)
+                    .put("accrual", snapshot.hasAccrualSection)
+                prefs(context).edit().putString("snapshot", json.toString()).apply()
+            }
         }
-
-        val source = next ?: receivedYtdRows.maxByOrNull { it.date } ?: return null
-        val snapshot = IbkrDividendSnapshot(
-            symbol = source.symbol.ifBlank { "IBKR" },
-            nextAmount = abs(source.amount),
-            nextCurrency = source.currency.ifBlank { "EUR" },
-            nextDateLabel = source.date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")),
-            daysUntil = if (next != null) ChronoUnit.DAYS.between(today, source.date) else 0,
-            receivedYtdEur = receivedYtd,
-            remainingYearEur = remaining,
-            hasUpcoming = next != null,
-            estimatedUpcoming = estimated,
-            updatedAt = System.currentTimeMillis()
-        )
-        cache(context, snapshot)
         return snapshot
     }
 
-    private fun inferUpcoming(received: List<DividendRow>, today: LocalDate, yearEnd: LocalDate): List<DividendRow> {
-        val result = mutableListOf<DividendRow>()
-        received.groupBy { it.symbol.trim().uppercase() }
-            .filterKeys { it.isNotBlank() }
-            .forEach { (symbol, rawRows) ->
-                // Consolidate multiple IBKR accounts paying the same symbol on the same day.
-                val byDate = rawRows.groupBy { it.date }.map { (date, dayRows) ->
-                    DividendRow(
-                        symbol = symbol,
-                        amount = dayRows.sumOf { abs(it.amount) },
-                        currency = dayRows.firstOrNull()?.currency ?: "EUR",
-                        date = date,
-                        upcoming = false
-                    )
-                }.sortedBy { it.date }
+    internal fun summarize(xml: String, today: LocalDate): IbkrDividendSnapshot {
+        val startOfYear = today.withDayOfYear(1)
+        val received = mutableListOf<Dividend>()
+        val accruals = mutableListOf<Dividend>()
+        val seenPayments = mutableSetOf<Pair<String, String>>()
+        var base = ""
+        var account = ""
+        var reportDate: LocalDate? = null
+        var startDate: LocalDate? = null
+        var statements = 0
+        var cashSections = 0
+        var accrualSections = 0
+        var cashInvalid = false
+        var accrualInvalid = false
+        var coversYtd = true
 
-                if (byDate.size < 2) return@forEach
-                val intervals = byDate.zipWithNext { a, b -> ChronoUnit.DAYS.between(a.date, b.date) }
-                    .filter { it in 20..400 }
-                    .takeLast(4)
-                    .sorted()
-                if (intervals.isEmpty()) return@forEach
-
-                val interval = intervals[intervals.size / 2]
-                // Ignore erratic/non-recurring history. Typical monthly,
-                // quarterly, semiannual and annual schedules all fit here.
-                if (interval !in 20..400) return@forEach
-
-                val last = byDate.last()
-                var nextDate = last.date.plusDays(interval)
-                var guard = 0
-                while (nextDate.isBefore(today) && guard++ < 20) nextDate = nextDate.plusDays(interval)
-                while (!nextDate.isAfter(yearEnd) && guard++ < 30) {
-                    result += DividendRow(symbol, last.amount, last.currency, nextDate, true)
-                    nextDate = nextDate.plusDays(interval)
-                }
-            }
-        return result.sortedBy { it.date }
-    }
-
-    fun cached(context: Context): IbkrDividendSnapshot? {
-        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (!p.contains("updated")) return null
-        return IbkrDividendSnapshot(
-            symbol = p.getString("symbol", "IBKR") ?: "IBKR",
-            nextAmount = Double.fromBits(p.getLong("nextAmount", 0L)),
-            nextCurrency = p.getString("nextCurrency", "EUR") ?: "EUR",
-            nextDateLabel = p.getString("nextDate", "") ?: "",
-            daysUntil = p.getLong("daysUntil", 0L),
-            receivedYtdEur = Double.fromBits(p.getLong("receivedYtd", 0L)),
-            remainingYearEur = Double.fromBits(p.getLong("remainingYear", 0L)),
-            hasUpcoming = p.getBoolean("hasUpcoming", false),
-            estimatedUpcoming = p.getBoolean("estimatedUpcoming", false),
-            updatedAt = p.getLong("updated", 0L)
-        )
-    }
-
-    fun clear(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
-    }
-
-    private fun cache(context: Context, snapshot: IbkrDividendSnapshot?) {
-        val e = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear()
-        if (snapshot != null) {
-            e.putString("symbol", snapshot.symbol)
-                .putLong("nextAmount", snapshot.nextAmount.toBits())
-                .putString("nextCurrency", snapshot.nextCurrency)
-                .putString("nextDate", snapshot.nextDateLabel)
-                .putLong("daysUntil", snapshot.daysUntil)
-                .putLong("receivedYtd", snapshot.receivedYtdEur.toBits())
-                .putLong("remainingYear", snapshot.remainingYearEur.toBits())
-                .putBoolean("hasUpcoming", snapshot.hasUpcoming)
-                .putBoolean("estimatedUpcoming", snapshot.estimatedUpcoming)
-                .putLong("updated", snapshot.updatedAt)
+        fun row(attrs: Map<String, String>, accrued: Boolean): Dividend? {
+            val date = if (accrued) flexDate(attrs["payDate"]) else
+                listOf("dateTime", "date", "reportDate", "settleDate").firstNotNullOfOrNull { flexDate(attrs[it]) }
+            val amount = if (accrued) attrs.flexNumber("netAmount") ?: attrs.flexNumber("grossAmount")?.let {
+                it - (attrs.flexNumber("tax") ?: return null) - (attrs.flexNumber("fee") ?: return null)
+            } else attrs.flexNumber("amount")
+            val currency = attrs["currency"].orEmpty().trim().uppercase(Locale.ROOT)
+            if (date == null || amount == null || currency.isBlank()) return null
+            return Dividend(attrs["symbol"].orEmpty(), amount, currency, date, flexAmountInEur(amount, currency, base, attrs))
         }
-        e.apply()
-    }
 
-    private fun parse(xml: String): List<DividendRow> {
-        val rows = mutableListOf<DividendRow>()
-        val parser = XmlPullParserFactory.newInstance().newPullParser().apply { setInput(StringReader(xml)) }
-        var event = parser.eventType
-        while (event != XmlPullParser.END_DOCUMENT) {
-            if (event == XmlPullParser.START_TAG) {
-                val attrs = (0 until parser.attributeCount).associate { parser.getAttributeName(it) to parser.getAttributeValue(it) }
-                when (parser.name) {
-                    "OpenDividendAccrual" -> rowFrom(attrs, true)?.let(rows::add)
-                    "CashTransaction" -> {
-                        val combined = listOfNotNull(attrs["type"], attrs["transactionType"], attrs["description"], attrs["activityDescription"]).joinToString(" ").lowercase()
-                        if ("dividend" in combined || "dividende" in combined) rowFrom(attrs, false)?.let(rows::add)
+        readFlex(xml) { tag, attrs ->
+            when (tag) {
+                "FlexStatement" -> {
+                    statements++
+                    account = attrs["accountId"].orEmpty()
+                    base = ""
+                    val to = flexDate(attrs["toDate"]) ?: error("Date du relevé IBKR absente")
+                    val from = flexDate(attrs["fromDate"])
+                    if (from == null || from.isAfter(startOfYear) || to.isBefore(startOfYear)) coversYtd = false
+                    startDate = from
+                    reportDate = minOf(reportDate ?: to, to)
+                }
+                "AccountInformation" -> base = attrs["currency"].orEmpty()
+                "CashTransactions" -> cashSections++
+                "OpenDividendAccruals" -> accrualSections++
+                "OpenDividendAccrual" -> {
+                    val dividend = row(attrs, true)
+                    if (dividend == null) accrualInvalid = true else accruals += dividend
+                }
+                "CashTransaction" -> {
+                    val type = (attrs["type"] ?: attrs["transactionType"]).orEmpty().trim().lowercase(Locale.ROOT)
+                    if (type in setOf("dividends", "dividend", "ordinary dividends", "payment in lieu of dividends",
+                            "payment in lieu of dividend", "dividendes", "dividende")) {
+                        val transactionId = attrs["transactionID"] ?: attrs["transactionId"]
+                        if (!transactionId.isNullOrBlank() && !seenPayments.add((attrs["accountId"] ?: account) to transactionId)) return@readFlex
+                        val dividend = row(attrs, false)
+                        if (dividend == null) cashInvalid = true
+                        else if (dividend.date >= startOfYear && dividend.date <= today &&
+                            startDate?.let { dividend.date >= it } != false) received += dividend
                     }
                 }
             }
-            event = parser.next()
         }
-        return rows
+        val date = reportDate ?: error("Aucun relevé IBKR")
+        val cashAvailable = statements > 0 && cashSections == statements
+        val accrualsAvailable = statements > 0 && accrualSections == statements
+        require(cashAvailable || accrualsAvailable) { "Sections Cash Transactions et Open Dividend Accruals absentes ou incomplètes" }
+        val pending = if (accrualsAvailable && !accrualInvalid) accruals.filter { it.amount != 0.0 } else emptyList()
+        val next = pending.filter { it.amount > 0 }.minByOrNull { it.date }
+        val ytd = if (cashAvailable && coversYtd && !cashInvalid && received.all { it.eur != null }) received.sumOf { it.eur!! } else null
+        val outstanding = if (accrualsAvailable && !accrualInvalid && pending.all { it.eur != null }) pending.sumOf { it.eur!! } else null
+        return IbkrDividendSnapshot(
+            next?.symbol, next?.amount, next?.currency, next?.date, ytd, outstanding, date,
+            cashAvailable, accrualsAvailable
+        )
     }
 
-    private fun rowFrom(a: Map<String, String>, upcoming: Boolean): DividendRow? {
-        val symbol = a["symbol"].orEmpty()
-        val amountKeys = if (upcoming) listOf("grossAmount", "accruedAmount", "amount", "netAmount") else listOf("amount", "netAmount", "grossAmount", "proceeds")
-        val amount = amountKeys.asSequence().mapNotNull { a[it]?.replace(",", "")?.toDoubleOrNull() }.firstOrNull() ?: 0.0
-        val currency = a["currency"] ?: a["fxCurrency"] ?: "EUR"
-        val dateKeys = if (upcoming) listOf("payDate", "exDate", "date", "reportDate") else listOf("dateTime", "date", "settleDate", "reportDate")
-        val rawDate = dateKeys.asSequence().mapNotNull { a[it] }.firstOrNull() ?: return null
-        val date = parseDate(rawDate) ?: return null
-        if (symbol.isBlank() && amount == 0.0) return null
-        return DividendRow(symbol, amount, currency, date, upcoming)
-    }
+    fun cached(context: Context): IbkrDividendSnapshot? = runCatching {
+        val json = JSONObject(prefs(context).getString("snapshot", null) ?: return null)
+        fun string(key: String) = if (json.isNull(key)) null else json.getString(key)
+        fun number(key: String) = if (json.isNull(key)) null else json.getDouble(key)
+        IbkrDividendSnapshot(
+            string("symbol"), number("amount"), string("currency"), flexDate(string("payment")),
+            number("received"), number("accrued"), LocalDate.parse(json.getString("date")),
+            json.getBoolean("cash"), json.getBoolean("accrual")
+        )
+    }.getOrNull()
 
-    private fun parseDate(raw: String): LocalDate? {
-        val clean = raw.trim().substringBefore(';').substringBefore(' ')
-        val patterns = listOf("yyyyMMdd", "yyyy-MM-dd", "MM/dd/yyyy", "dd/MM/yyyy")
-        for (p in patterns) {
-            val d = runCatching { LocalDate.parse(clean, DateTimeFormatter.ofPattern(p)) }.getOrNull()
-            if (d != null) return d
-        }
-        return null
-    }
+    fun clear(context: Context) { prefs(context).edit().clear().apply() }
 
-    private fun fetchStatement(c: BrokerConnectionStore.IbkrFlexCredentials): String {
-        val token = URLEncoder.encode(c.token, StandardCharsets.UTF_8.toString())
-        val query = URLEncoder.encode(c.queryId, StandardCharsets.UTF_8.toString())
-        val send = get("$BASE/SendRequest?t=$token&q=$query&v=3")
-        val ref = tagText(send, "ReferenceCode") ?: throw IllegalStateException(tagText(send, "ErrorMessage") ?: "IBKR Flex: ReferenceCode absent")
-        var lastError = "Rapport IBKR en préparation"
-        repeat(6) {
-            if (it > 0) Thread.sleep(1_000)
-            val body = get("$BASE/GetStatement?t=$token&q=${URLEncoder.encode(ref, "UTF-8")}&v=3")
-            if (body.contains("<FlexQueryResponse")) return body
-            lastError = tagText(body, "ErrorMessage") ?: lastError
-        }
-        throw IllegalStateException(lastError)
-    }
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+}
 
-    private fun get(url: String): String {
-        val c = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 12_000
-            readTimeout = 20_000
-            setRequestProperty("User-Agent", "MarketWidgets/1.9 Android")
-            setRequestProperty("Accept", "application/xml,text/xml,*/*")
-        }
-        return try {
-            val stream = if (c.responseCode in 200..299) c.inputStream else c.errorStream
-            val body = stream.bufferedReader().use { it.readText() }
-            if (c.responseCode !in 200..299) throw IllegalStateException("IBKR HTTP ${c.responseCode}")
-            body
-        } finally { c.disconnect() }
-    }
-
-    private fun fxToEur(currency: String): Double {
-        val c = currency.uppercase()
-        if (c.isBlank() || c == "EUR" || c == "BASE_SUMMARY") return 1.0
-        return runCatching {
-            val symbol = URLEncoder.encode("EUR${c}=X", "UTF-8")
-            val conn = (URL("https://query1.finance.yahoo.com/v8/finance/chart/$symbol?range=1d&interval=5m").openConnection() as HttpURLConnection).apply {
-                connectTimeout = 7_000
-                readTimeout = 7_000
-                setRequestProperty("User-Agent", "Mozilla/5.0 MarketWidgets")
-            }
-            if (conn.responseCode !in 200..299) return@runCatching 1.0
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val rate = org.json.JSONObject(body).getJSONObject("chart").getJSONArray("result").getJSONObject(0).getJSONObject("meta").getDouble("regularMarketPrice")
-            if (rate > 0) 1.0 / rate else 1.0
-        }.getOrDefault(1.0)
-    }
-
-    private fun tagText(xml: String, tag: String): String? = Regex("<$tag>(.*?)</$tag>", RegexOption.DOT_MATCHES_ALL).find(xml)?.groupValues?.getOrNull(1)?.trim()
+internal fun flexAmountInEur(
+    amount: Double, currency: String, base: String, attrs: Map<String, String>
+): Double? = when {
+    currency.equals("EUR", true) -> amount
+    base.equals("EUR", true) -> attrs.flexNumber("fxRateToBase")?.takeIf { it > 0 }?.let { amount * it }
+    amount == 0.0 && currency.isNotBlank() -> 0.0
+    else -> null
 }

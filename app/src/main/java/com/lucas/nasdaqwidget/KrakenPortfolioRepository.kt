@@ -9,200 +9,165 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.time.Instant
-import java.time.ZoneOffset
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 data class KrakenPositionSnapshot(val symbol:String,val valueEur:Double,val dayChangeEur:Double,val dayChangePercent:Double)
-data class KrakenPortfolioSnapshot(val totalEur:Double,val dayChangeEur:Double,val dayChangePercent:Double,val balances:Map<String,Double>,val positions:List<KrakenPositionSnapshot>,val updatedAt:Long)
-private data class TickerSnapshot(val current:Double,val open:Double)
-private data class CostState(var qty:Double=0.0,var costUsd:Double=0.0)
-
+data class KrakenPortfolioSnapshot(val totalEur:Double,val dayChangeEur:Double,val dayChangePercent:Double,val balances:Map<String,Double>,val positions:List<KrakenPositionSnapshot>,val updatedAt:Long, val unpricedAssets: Set<String> = emptySet()) {
+    val availableTotalEur: Double?
+        get() = totalEur.takeIf { unpricedAssets.isEmpty() || positions.isNotEmpty() || balances.keys.any { it == "EUR" } }
+}
+internal data class TickerSnapshot(val current: Double, val open: Double?)
 object KrakenPortfolioRepository {
-    private const val PREFS="kraken_portfolio_cache"
-    private const val BASE="https://api.kraken.com"
-    private val cashLike=setOf("EUR","USD","GBP","CHF","CAD","AUD","JPY","USDT","USDC")
+    private const val PREFS = "kraken_portfolio_cache"
+    private const val BASE = "https://api.kraken.com"
+    private var lastNonce = 0L
 
-    fun refresh(context:Context,timeframe:PortfolioTimeframe=PortfolioTimeframeStore.get(context)):KrakenPortfolioSnapshot{
-        val c=BrokerConnectionStore.krakenCredentials(context)?:error("Identifiants Kraken absents")
-        val balances=fetchBalances(c).filterValues{kotlin.math.abs(it)>1e-8}
-        val costs=fetchCostBasis(c)
-        val usdToEur=eurTicker("ZUSD")?.current?:1.0
-        var total=0.0
-        var pnlEur=0.0
-        var investedEur=0.0
-        val positions=mutableListOf<KrakenPositionSnapshot>()
-
-        balances.forEach{(raw,amount)->
-            val symbol=normalizeAsset(raw)
-            val eur=eurTicker(raw)?.current?:0.0
-            val valueEur=amount*eur
-            total+=valueEur
-            if(symbol !in cashLike&&eur>0&&valueEur>0.01){
-                val state=costs[symbol]
-                val currentUsd=usdTicker(raw)?.current
-                if(state!=null&&state.qty>1e-10&&state.costUsd>0&&currentUsd!=null&&currentUsd>0){
-                    val costUsd=state.costUsd*(amount/state.qty).coerceAtLeast(0.0)
-                    if(costUsd>0){
-                        val valueUsd=amount*currentUsd
-                        val changeUsd=valueUsd-costUsd
-                        val pct=changeUsd/costUsd*100.0
-                        val changeEur=changeUsd*usdToEur
-                        pnlEur+=changeEur
-                        investedEur+=costUsd*usdToEur
-                        positions+=KrakenPositionSnapshot(displayAsset(symbol),valueEur,changeEur,pct)
-                    }
+    @Synchronized
+    fun refresh(context: Context): KrakenPortfolioSnapshot {
+        val credentials = BrokerConnectionStore.krakenCredentials(context) ?: error("Identifiants Kraken absents")
+        try {
+            val snapshot = valueBalances(fetchBalances(credentials), ::eurTicker, System.currentTimeMillis())
+            synchronized(BrokerConnectionStore) {
+                require(BrokerConnectionStore.krakenCredentials(context) == credentials) { "Connexion Kraken modifiée" }
+                cache(context, snapshot)
+                prefs(context).edit().remove("last_error").apply()
+                BrokerConnectionStore.setKrakenVerified(context, true)
+            }
+            return snapshot
+        } catch (e: Exception) {
+            synchronized(BrokerConnectionStore) {
+                if (BrokerConnectionStore.krakenCredentials(context) == credentials) {
+                    prefs(context).edit().putString("last_error", connectionError(e)).apply()
                 }
             }
+            throw e
         }
-        val snapshot=KrakenPortfolioSnapshot(total,pnlEur,if(investedEur>0)pnlEur/investedEur*100 else 0.0,balances,positions,System.currentTimeMillis())
-        cache(context,snapshot)
-        BrokerConnectionStore.setKrakenVerified(context,true)
-        return snapshot
     }
 
-    private fun fetchCostBasis(c:BrokerConnectionStore.KrakenCredentials):Map<String,CostState>{
-        val trades=mutableListOf<JSONObject>()
-        var ofs=0
-        var count=Int.MAX_VALUE
-        while(ofs<count&&ofs<10000){
-            val r=privatePost(c,"/0/private/TradesHistory",mapOf("ofs" to ofs.toString()))
-            val result=r.getJSONObject("result")
-            count=result.optInt("count",0)
-            val obj=result.optJSONObject("trades")?:break
-            obj.keys().forEach{trades+=obj.getJSONObject(it)}
-            if(obj.length()==0)break
-            ofs+=obj.length()
+    internal fun valueBalances(
+        balances: Map<String, Double>, quoteFor: (String) -> TickerSnapshot?, now: Long
+    ): KrakenPortfolioSnapshot {
+        val grouped = mutableMapOf<String, Double>()
+        balances.forEach { (raw, amount) ->
+            val asset = normalizeAsset(raw)
+            grouped[asset] = (grouped[asset] ?: 0.0) + amount
         }
-        val earliest=trades.minOfOrNull{it.optDouble("time",Double.MAX_VALUE)}?.takeIf{it.isFinite()&&it>0}
-        val eurUsdHistory=earliest?.let{dailyFxHistory("EURUSD",it.toLong())}.orEmpty()
-        val states=mutableMapOf<String,CostState>()
-        trades.sortedBy{it.optDouble("time")}.forEach{t->
-            val type=t.optString("type")
-            val pair=t.optString("pair")
-            val asset=baseAsset(pair)
-            val vol=t.optString("vol").toDoubleOrNull()?:return@forEach
-            val cost=t.optString("cost").toDoubleOrNull()?:return@forEach
-            val quote=quoteAsset(pair)
-            val timestamp=t.optDouble("time").toLong()
-            val quoteUsd=quoteToUsdAt(quote,timestamp,eurUsdHistory)
-            val s=states.getOrPut(asset){CostState()}
-            if(type=="buy"){
-                s.qty+=vol
-                s.costUsd+=cost*quoteUsd
-            }else if(type=="sell"&&s.qty>0){
-                val sold=vol.coerceAtMost(s.qty)
-                val avg=s.costUsd/s.qty
-                s.costUsd=(s.costUsd-avg*sold).coerceAtLeast(0.0)
-                s.qty=(s.qty-sold).coerceAtLeast(0.0)
-                if(s.qty<1e-10){s.qty=0.0;s.costUsd=0.0}
+        grouped.values.removeAll { it == 0.0 }
+        val unpriced = sortedSetOf<String>()
+        val positions = mutableListOf<KrakenPositionSnapshot>()
+        var completeDay = true
+        var total = 0.0
+        var change = 0.0
+
+        for ((asset, amount) in grouped) {
+            val quote = if (asset == "EUR") TickerSnapshot(1.0, 1.0) else quoteFor(asset)
+            val current = quote?.let { amount * it.current }
+            if (quote == null || current == null || !current.isFinite()) {
+                unpriced += asset
+                continue
+            }
+            total += current
+            val open = quote.open
+            if (open == null) completeDay = false
+            val delta = open?.let { amount * (quote.current - it) } ?: 0.0
+            change += delta
+            if (asset != "EUR") {
+                positions += KrakenPositionSnapshot(
+                    if (asset == "XBT") "BTC" else asset, current, delta,
+                    open?.let { (quote.current / it - 1.0) * 100 } ?: Double.NaN
+                )
             }
         }
-        return states
+        val previous = total - change
+        val percent = if (completeDay && unpriced.isEmpty() && previous > 0) change / previous * 100 else Double.NaN
+        return KrakenPortfolioSnapshot(total, change, percent, grouped, positions, now, unpriced)
     }
 
-    private fun quoteToUsdAt(quote:String,time:Long,eurUsd:Map<Long,Double>):Double=when(quote){
-        "USD","USDT","USDC"->1.0
-        "EUR"->{
-            val day=Instant.ofEpochSecond(time).atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
-            eurUsd[day]?:eurUsd.entries.minByOrNull{kotlin.math.abs(it.key-day)}?.value?:fetchTicker("EURUSD")?.current?:1.0
-        }
-        else->1.0
-    }
+    fun lastError(context: Context): String? = prefs(context).getString("last_error", null)
 
-    private fun dailyFxHistory(pair:String,since:Long): Map<Long,Double> = runCatching {
-        val u="$BASE/0/public/OHLC?pair=${URLEncoder.encode(pair,"UTF-8")}&interval=1440&since=$since"
-        val con=URL(u).openConnection() as HttpURLConnection
-        con.connectTimeout=10000;con.readTimeout=10000
-        val root=JSONObject(con.inputStream.bufferedReader().use{it.readText()}).getJSONObject("result")
-        val key=root.keys().asSequence().firstOrNull{it!="last"}?:return@runCatching emptyMap<Long,Double>()
-        val rows=root.getJSONArray(key)
-        buildMap<Long,Double>{
-            for(i in 0 until rows.length()){
-                val row=rows.getJSONArray(i)
-                val ts=row.optLong(0)
-                val close=row.optString(4).toDoubleOrNull()?:continue
-                val day=Instant.ofEpochSecond(ts).atZone(ZoneOffset.UTC).toLocalDate().toEpochDay()
-                put(day,close)
-            }
-        }
-    }.getOrDefault(emptyMap())
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    private fun baseAsset(pair:String):String{
-        var p=pair.uppercase().replace("/","").replace("-","")
-        val quotes=listOf("ZEUR","ZUSD","USDT","USDC","EUR","USD","GBP","BTC","XBT")
-        val q=quotes.firstOrNull{p.endsWith(it)}
-        if(q!=null)p=p.dropLast(q.length)
-        return canonicalAsset(p)
-    }
-    private fun canonicalAsset(raw:String):String{
-        val a=raw.substringBefore('.').uppercase()
-        return when(a){
-            "XXBT","XBT","BTC"->"XBT"
-            "XETH","ETH"->"ETH"
-            "ZEUR","EUR"->"EUR"
-            "ZUSD","USD"->"USD"
-            else->if((a.startsWith("X")||a.startsWith("Z"))&&a.length>=4)a.drop(1) else a
-        }
-    }
-    private fun displayAsset(symbol:String)=if(symbol=="XBT")"BTC" else symbol
-    private fun quoteAsset(pair:String):String{
-        val p=pair.uppercase().replace("/","").replace("-","")
-        return when{
-            p.endsWith("USDT")->"USDT"
-            p.endsWith("USDC")->"USDC"
-            p.endsWith("ZEUR")||p.endsWith("EUR")->"EUR"
-            p.endsWith("ZUSD")||p.endsWith("USD")->"USD"
-            p.endsWith("GBP")->"GBP"
-            else->"EUR"
-        }
+    private class ApiError(val detail: String) : IllegalStateException(detail)
+
+    private fun connectionError(e: Exception): String = when {
+        e is java.io.IOException -> "Connexion réseau indisponible"
+        e is ApiError && "Permission denied" in e.detail -> "Clé API · autorisation Query Funds requise"
+        e is ApiError && ("Invalid key" in e.detail || "Invalid signature" in e.detail) -> "Clé API ou secret refusé"
+        e is ApiError && "Invalid nonce" in e.detail -> "Nonce refusé · vérifiez si la clé est utilisée ailleurs"
+        e is ApiError && "Rate limit" in e.detail -> "Limite de requêtes Kraken atteinte"
+        e is ApiError -> "Erreur Kraken · ${e.detail}"
+        else -> "Impossible de lire les soldes Kraken"
     }
 
     fun cached(context:Context):KrakenPortfolioSnapshot?{
         val p=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
-        val raw=p.getString("balances",null)?:return null
+        val raw=p.getString("valued_balances",null)?:return null
         val o=runCatching{JSONObject(raw)}.getOrNull()?:return null
         val b=mutableMapOf<String,Double>();o.keys().forEach{b[it]=o.optDouble(it)}
         val pos=mutableListOf<KrakenPositionSnapshot>()
         p.getString("positions",null)?.let{runCatching{JSONArray(it)}.getOrNull()?.let{a->for(i in 0 until a.length()){val x=a.optJSONObject(i)?:continue;pos+=KrakenPositionSnapshot(x.optString("symbol"),x.optDouble("valueEur"),x.optDouble("dayChangeEur"),x.optDouble("dayChangePercent"))}}}
-        return KrakenPortfolioSnapshot(Double.fromBits(p.getLong("total",0)),Double.fromBits(p.getLong("dayChange",0)),Double.fromBits(p.getLong("dayPercent",0)),b,pos,p.getLong("updated",0))
+        return KrakenPortfolioSnapshot(Double.fromBits(p.getLong("total",0)),Double.fromBits(p.getLong("dayChange",0)),Double.fromBits(p.getLong("dayPercent",0)),b,pos,p.getLong("updated",0), p.getStringSet("unpriced_assets", emptySet()).orEmpty().toSet())
     }
     fun clear(context:Context){context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply()}
     private fun cache(context:Context,s:KrakenPortfolioSnapshot){
         val b=JSONObject();s.balances.forEach{(k,v)->b.put(k,v)}
-        val a=JSONArray();s.positions.forEach{a.put(JSONObject().put("symbol",it.symbol).put("valueEur",it.valueEur).put("dayChangeEur",it.dayChangeEur).put("dayChangePercent",it.dayChangePercent))}
-        context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putLong("total",s.totalEur.toBits()).putLong("dayChange",s.dayChangeEur.toBits()).putLong("dayPercent",s.dayChangePercent.toBits()).putString("balances",b.toString()).putString("positions",a.toString()).putLong("updated",s.updatedAt).apply()
+        val a=JSONArray();s.positions.forEach{a.put(JSONObject().put("symbol",it.symbol).put("valueEur",it.valueEur).put("dayChangeEur",it.dayChangeEur).put("dayChangePercent",it.dayChangePercent.takeIf(Double::isFinite)))}
+        context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putLong("total",s.totalEur.toBits()).putLong("dayChange",s.dayChangeEur.toBits()).putLong("dayPercent",s.dayChangePercent.toBits()).putString("valued_balances",b.toString()).putString("positions",a.toString()).putStringSet("unpriced_assets", s.unpricedAssets).putLong("updated",s.updatedAt).apply()
     }
     private fun fetchBalances(c:BrokerConnectionStore.KrakenCredentials):Map<String,Double>{
         val r=privatePost(c,"/0/private/Balance",emptyMap());val x=r.getJSONObject("result");val out=linkedMapOf<String,Double>()
-        x.keys().forEach{val v=x.optString(it).toDoubleOrNull()?:0.0;if(v!=0.0)out[it]=v}
+        x.keys().forEach{val v=x.optString(it).toDoubleOrNull()?.takeIf(Double::isFinite) ?: error("Solde Kraken invalide");if(v!=0.0)out[it]=v}
         return out
     }
     private fun privatePost(c:BrokerConnectionStore.KrakenCredentials,path:String,params:Map<String,String>):JSONObject{
-        val nonce=System.currentTimeMillis().toString()
+        lastNonce = maxOf(System.currentTimeMillis(), lastNonce + 1)
+        val nonce = lastNonce.toString()
         val data=(listOf("nonce="+URLEncoder.encode(nonce,"UTF-8"))+params.map{URLEncoder.encode(it.key,"UTF-8")+"="+URLEncoder.encode(it.value,"UTF-8")}).joinToString("&")
         val con=(URL(BASE+path).openConnection() as HttpURLConnection).apply{requestMethod="POST";connectTimeout=12000;readTimeout=12000;doOutput=true;setRequestProperty("API-Key",c.apiKey);setRequestProperty("API-Sign",sign(path,nonce,data,c.apiSecret));setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");setRequestProperty("User-Agent","MarketWidgets/2.1")}
-        return try{con.outputStream.use{it.write(data.toByteArray(StandardCharsets.UTF_8))};val body=(if(con.responseCode in 200..299)con.inputStream else con.errorStream).bufferedReader().use{it.readText()};val j=JSONObject(body);val e=j.optJSONArray("error");if(e!=null&&e.length()>0)error(e.optString(0,"Erreur Kraken"));j}finally{con.disconnect()}
+        return try{con.outputStream.use{it.write(data.toByteArray(StandardCharsets.UTF_8))};val code = con.responseCode; if (code !in 200..299) throw ApiError("HTTP $code"); val body = con.inputStream.bufferedReader().use { it.readText() }; val j = JSONObject(body); val e = j.optJSONArray("error"); if (e != null && e.length() > 0) throw ApiError(e.optString(0, "Réponse invalide").take(100)); j}finally{con.disconnect()}
     }
     private fun sign(path:String,nonce:String,data:String,secret:String):String{
         val hash=MessageDigest.getInstance("SHA-256").digest((nonce+data).toByteArray());val mac=Mac.getInstance("HmacSHA512");mac.init(SecretKeySpec(Base64.decode(secret,Base64.DEFAULT),"HmacSHA512"));return Base64.encodeToString(mac.doFinal(path.toByteArray()+hash),Base64.NO_WRAP)
     }
-    private fun eurTicker(raw:String):TickerSnapshot?{
-        val a=normalizeAsset(raw);if(a=="EUR")return TickerSnapshot(1.0,1.0)
-        val pairs=when(a){"XBT"->listOf("XBTEUR" to false,"XXBTZEUR" to false);"USD"->listOf("EURUSD" to true);"USDT"->listOf("USDTEUR" to false);"USDC"->listOf("USDCEUR" to false);else->listOf("${a}EUR" to false)}
-        for((pair,inv)in pairs){val t=fetchTicker(pair)?:continue;if(t.current>0)return if(inv)TickerSnapshot(1/t.current,1/t.open)else t}
-        return null
+    private fun eurTicker(asset: String): TickerSnapshot? {
+        val direct = fetchTicker("${asset}EUR")
+        if (direct != null) return direct
+        if (asset in setOf("AUD", "CAD", "CHF", "GBP", "JPY", "USD")) {
+            fetchTicker("EUR$asset")?.let {
+                return TickerSnapshot(1 / it.current, it.open?.let { open -> 1 / open })
+            }
+        }
+        if (asset == "USD") return null
+        val usd = fetchTicker("${asset}USD") ?: return null
+        val euro = fetchTicker("EURUSD") ?: return null
+        val open = if (usd.open != null && euro.open != null) usd.open / euro.open else null
+        return TickerSnapshot(usd.current / euro.current, open)
     }
-    private fun usdTicker(raw:String):TickerSnapshot?{
-        val a=normalizeAsset(raw);if(a=="USD"||a=="USDT"||a=="USDC")return TickerSnapshot(1.0,1.0)
-        val pairs=when(a){"XBT"->listOf("XBTUSD","XXBTZUSD");else->listOf("${a}USD")}
-        for(pair in pairs){val t=fetchTicker(pair);if(t!=null&&t.current>0)return t}
-        return null
-    }
-    private fun fetchTicker(pair:String):TickerSnapshot?=runCatching{
-        val c=URL("$BASE/0/public/Ticker?pair=${URLEncoder.encode(pair,"UTF-8")}").openConnection() as HttpURLConnection;c.connectTimeout=8000;c.readTimeout=8000
-        val r=JSONObject(c.inputStream.bufferedReader().use{it.readText()}).getJSONObject("result");val t=r.getJSONObject(r.keys().next());val cur=t.getJSONArray("c").getString(0).toDouble();TickerSnapshot(cur,t.optString("o").toDoubleOrNull()?:cur)
+
+    private fun fetchTicker(pair: String): TickerSnapshot? = runCatching {
+        val connection = URL("$BASE/0/public/Ticker?pair=${URLEncoder.encode(pair, "UTF-8")}").openConnection() as HttpURLConnection
+        connection.connectTimeout = 8_000
+        connection.readTimeout = 8_000
+        try {
+            val result = JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getJSONObject("result")
+            val ticker = result.getJSONObject(result.keys().next())
+            val current = ticker.getJSONArray("c").getString(0).toDouble()
+            val open = ticker.optDouble("o").takeIf { it.isFinite() && it > 0 }
+            require(current.isFinite() && current > 0)
+            TickerSnapshot(current, open)
+        } finally {
+            connection.disconnect()
+        }
     }.getOrNull()
-    private fun normalizeAsset(raw:String):String=canonicalAsset(raw)
+
+    private fun normalizeAsset(raw: String): String {
+        val asset = raw.substringBefore('.').uppercase()
+        return when (asset) {
+            "XXBT", "BTC" -> "XBT"
+            "XETH", "XXRP", "XXLM", "XLTC", "XXMR", "XXDG", "XZEC", "XETC", "XMLN", "XREP" -> asset.drop(1)
+            "ZEUR", "ZUSD", "ZGBP", "ZCAD", "ZJPY", "ZAUD", "ZCHF" -> asset.drop(1)
+            else -> asset
+        }
+    }
 }

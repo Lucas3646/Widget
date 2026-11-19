@@ -18,6 +18,8 @@ import androidx.work.WorkManager
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
+import java.util.Date
+import java.text.SimpleDateFormat
 import java.util.concurrent.TimeUnit
 
 class MvrvWidgetProvider : AppWidgetProvider() {
@@ -44,8 +46,7 @@ class MvrvWidgetProvider : AppWidgetProvider() {
         private fun updateWidget(context: Context, manager: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_mvrv)
             val primary = MvrvRepository.cached(context)
-            val fallbackZ = MvrvFallbackRepository.cached(context)
-            val snapshot = primary ?: fallbackZ?.let { MvrvSnapshot(it, null, null, System.currentTimeMillis()) }
+            val snapshot = primary ?: MvrvFallbackRepository.cached(context)
             val primaryError = MvrvRepository.lastError(context)
             val fallbackError = MvrvFallbackRepository.lastError(context)
             val symbols = DecimalFormatSymbols(Locale.FRANCE).apply { groupingSeparator = ' ' }
@@ -82,8 +83,7 @@ class MvrvWidgetProvider : AppWidgetProvider() {
                 val detail = when {
                     target != null && distance != null && distance > 0.0 -> "Z7 ≈ $${priceFormat.format(target)} · +${pctFormat.format(distance)}%"
                     target != null && distance != null -> "Z7 ≈ $${priceFormat.format(target)} · atteinte"
-                    primary == null -> "MVRV Z-Score disponible"
-                    else -> "Zone Z7 · estimation indisponible"
+                    else -> "Collecté le ${SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE).format(Date(snapshot.updatedAtMillis))}"
                 }
                 views.setTextViewText(R.id.mvrvWidgetDistance, detail)
             }

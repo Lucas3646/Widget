@@ -4,20 +4,17 @@ import android.content.Context
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 
-class PortfolioRefreshWorker(appContext: Context, workerParams: WorkerParameters) : Worker(appContext, workerParams) {
+class PortfolioRefreshWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result {
-        val timeframe = PortfolioTimeframeStore.get(applicationContext)
-        var attempted = false
-        var success = false
-        if (BrokerConnectionStore.isKrakenVerified(applicationContext)) {
-            attempted = true
-            if (runCatching { KrakenPortfolioRepository.refresh(applicationContext, timeframe) }.isSuccess) success = true
-        }
-        if (BrokerConnectionStore.hasIbkrSetup(applicationContext)) {
-            attempted = true
-            if (runCatching { IbkrFlexRepository.refresh(applicationContext, timeframe) }.isSuccess) success = true
-        }
-        PortfolioWidgetProvider.updateAll(applicationContext)
-        return if (!attempted || success) Result.success() else Result.retry()
+        val context = applicationContext
+        val kraken = if (BrokerConnectionStore.hasKraken(context)) {
+            runCatching { KrakenPortfolioRepository.refresh(context) }.exceptionOrNull()
+        } else null
+        val ibkr = if (BrokerConnectionStore.hasIbkrSetup(context)) {
+            runCatching { IbkrFlexRepository.refresh(context) }.exceptionOrNull()
+        } else null
+        PortfolioWidgetProvider.updateAll(context)
+        val retry = kraken != null || ibkr?.isFlexRetryable() == true
+        return if (retry && runAttemptCount < 2 && !isStopped) Result.retry() else Result.success()
     }
 }
