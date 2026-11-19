@@ -9,12 +9,8 @@ class AlertRefreshWorker(
     params: WorkerParameters
 ) : Worker(context, params) {
     override fun doWork(): Result {
-        return runCatching {
-            AlertMarketRepository.refresh(applicationContext)
-            AlertWidgetProvider.updateAll(applicationContext)
-        }.fold(
-            onSuccess = { Result.success() },
-            onFailure = { Result.retry() }
-        )
+        val failed = AlertMarketRepository.refresh(applicationContext)
+        AlertWidgetProvider.updateAll(applicationContext)
+        return if (failed.isNotEmpty() && runAttemptCount < 2) Result.retry() else Result.success()
     }
 }

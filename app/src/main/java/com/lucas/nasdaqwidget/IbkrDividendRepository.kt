@@ -25,10 +25,10 @@ object IbkrDividendRepository {
         val date: LocalDate, val eur: Double?
     )
 
-    fun refresh(context: Context): IbkrDividendSnapshot {
+    fun refresh(context: Context, force: Boolean = false): IbkrDividendSnapshot {
         val credentials = BrokerConnectionStore.ibkrFlexCredentials(context)
             ?: error("Token Flex ou Query ID absent")
-        val snapshot = summarize(IbkrFlexClient.statement(context, credentials), LocalDate.now())
+        val snapshot = summarize(IbkrFlexClient.statement(context, credentials, force), LocalDate.now())
         synchronized(BrokerConnectionStore) {
             require(BrokerConnectionStore.ibkrFlexCredentials(context) == credentials) { "Connexion IBKR modifiée" }
             if (cached(context)?.reportDate?.isAfter(snapshot.reportDate) != true) {

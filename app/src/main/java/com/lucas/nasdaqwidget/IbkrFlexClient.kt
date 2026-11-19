@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter
 
 internal object IbkrFlexClient {
     private const val BASE = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
-    private const val CACHE_MILLIS = 2 * 60 * 1000L
+    private const val CACHE_MILLIS = 15 * 60 * 1000L
     private var lastReport: Report? = null
     private var lastFailure: Failure? = null
 
@@ -24,10 +24,11 @@ internal object IbkrFlexClient {
     class FlexError(message: String, val retryable: Boolean) : IllegalStateException(message)
 
     @Synchronized
-    fun statement(context: Context, credentials: BrokerConnectionStore.IbkrFlexCredentials): String {
+    fun statement(context: Context, credentials: BrokerConnectionStore.IbkrFlexCredentials, force: Boolean): String {
         require(BrokerConnectionStore.ibkrFlexCredentials(context) == credentials) { "Connexion IBKR modifiée" }
         val now = android.os.SystemClock.elapsedRealtime()
-        lastReport?.takeIf { it.credentials == credentials && now - it.at < CACHE_MILLIS }?.let { return it.xml }
+        val ttl = if (force) 30_000L else CACHE_MILLIS
+        lastReport?.takeIf { it.credentials == credentials && now - it.at < ttl }?.let { return it.xml }
         lastFailure?.takeIf { it.credentials == credentials && now < it.until }?.let { throw it.error }
         lastReport = null
         val xml = try {

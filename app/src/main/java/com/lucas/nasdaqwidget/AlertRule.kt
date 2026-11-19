@@ -3,10 +3,6 @@ package com.lucas.nasdaqwidget
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 
 data class AlertRule(
     val id: Long,
@@ -112,71 +108,23 @@ object AlertStore {
 }
 
 object AlertMarketRepository {
-    private const val PREFS = "market_alert_prices"
+    private const val MAX_QUOTE_AGE = 45 * 60 * 1000L
 
-    fun refresh(context: Context): Map<String, Double> {
-        val rules = AlertStore.rules(context)
-        val symbols = buildSet {
-            rules.filterNot { it.isMvrv() }.forEach { add(it.symbol) }
-            if (rules.any { it.isMvrv() }) add("BTC-USD")
+    fun symbols(context: Context): Set<String> =
+        AlertStore.rules(context).filterNot(AlertRule::isMvrv).map(AlertRule::symbol).toSet()
+
+    fun refresh(context: Context): Set<String> {
+        val failed = mutableSetOf<String>()
+        for (symbol in symbols(context)) {
+            runCatching { MarketRepository.fetchAndCache(context, symbol) }.onFailure { failed += symbol }
         }
-        val result = mutableMapOf<String, Double>()
-        symbols.forEach { symbol ->
-            runCatching { fetchPrice(symbol) }
-                .onSuccess { price ->
-                    result[symbol] = price
-                    savePrice(context, symbol, price)
-                }
-        }
-        return result
+        return failed
     }
 
     fun cachedPrice(context: Context, symbol: String): Double? {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val key = "price_$symbol"
-        return if (prefs.contains(key)) Double.fromBits(prefs.getLong(key, 0L)) else null
-    }
-
-    fun lastUpdated(context: Context): Long =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong("updatedAt", 0L)
-
-    private fun savePrice(context: Context, symbol: String, price: Double) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putLong("price_$symbol", price.toBits())
-            .putLong("updatedAt", System.currentTimeMillis())
-            .apply()
-    }
-
-    private fun fetchPrice(symbol: String): Double {
-        val encoded = URLEncoder.encode(symbol, StandardCharsets.UTF_8.toString())
-        val endpoint = "https://query1.finance.yahoo.com/v8/finance/chart/$encoded?range=1d&interval=5m&includePrePost=true"
-        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 10_000
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "MarketWidget/1.0 Android")
-        }
-        try {
-            if (connection.responseCode !in 200..299) {
-                throw IllegalStateException("HTTP ${connection.responseCode}")
-            }
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
-            val root = JSONObject(body)
-            val result = root.getJSONObject("chart").getJSONArray("result").getJSONObject(0)
-            val meta = result.getJSONObject("meta")
-            if (meta.has("regularMarketPrice") && !meta.isNull("regularMarketPrice")) {
-                return meta.getDouble("regularMarketPrice")
-            }
-            val quote = result.getJSONObject("indicators").getJSONArray("quote").getJSONObject(0)
-            val closes = quote.getJSONArray("close")
-            for (i in closes.length() - 1 downTo 0) {
-                if (!closes.isNull(i)) return closes.getDouble(i)
-            }
-            throw IllegalStateException("No market price")
-        } finally {
-            connection.disconnect()
-        }
+        val quote = MarketRepository.cached(context, symbol) ?: return null
+        val timestamp = quote.quotedAtMillis ?: return null
+        val age = System.currentTimeMillis() - timestamp
+        return quote.price.takeIf { age in 0..MAX_QUOTE_AGE }
     }
 }

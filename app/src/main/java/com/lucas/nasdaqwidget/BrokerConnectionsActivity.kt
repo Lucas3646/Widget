@@ -105,8 +105,8 @@ class BrokerConnectionsActivity : AppCompatActivity() {
                 isEnabled=false;text="VÉRIFICATION…"
                 BrokerConnectionStore.saveIbkrFlex(this@BrokerConnectionsActivity,flexToken.text.toString(),queryId.text.toString())
                 Thread {
-                    val r=runCatching{IbkrFlexRepository.refresh(this@BrokerConnectionsActivity)}
-                    val dividends=runCatching{IbkrDividendRepository.refresh(this@BrokerConnectionsActivity)}
+                    val r=runCatching{IbkrFlexRepository.refresh(this@BrokerConnectionsActivity, force = true)}
+                    val dividends=runCatching{IbkrDividendRepository.refresh(this@BrokerConnectionsActivity, force = true)}
                     runOnUiThread {
                         isEnabled=true;text="CONNECTER IBKR"
                         if (r.isSuccess || dividends.isSuccess) {
@@ -141,8 +141,8 @@ class BrokerConnectionsActivity : AppCompatActivity() {
             setOnClickListener {
                 isEnabled=false
                 Thread {
-                    val r=runCatching{IbkrFlexRepository.refresh(this@BrokerConnectionsActivity)}
-                    val dividends = runCatching { IbkrDividendRepository.refresh(this@BrokerConnectionsActivity) }
+                    val r=runCatching{IbkrFlexRepository.refresh(this@BrokerConnectionsActivity, force = true)}
+                    val dividends = runCatching { IbkrDividendRepository.refresh(this@BrokerConnectionsActivity, force = true) }
                     runOnUiThread {
                         isEnabled=true
                         PortfolioWidgetProvider.updateAll(this@BrokerConnectionsActivity)

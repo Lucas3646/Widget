@@ -19,7 +19,7 @@ class MacroWidgetProvider : AppWidgetProvider() {
     companion object {
         private const val ACTION_REFRESH_MACRO = "com.lucas.nasdaqwidget.REFRESH_MACRO"
         fun updateAll(context: Context) { val m=AppWidgetManager.getInstance(context); m.getAppWidgetIds(ComponentName(context,MacroWidgetProvider::class.java)).forEach{m.updateAppWidget(it,buildViews(context))} }
-        private fun timing(s: MacroSnapshot): String { val d=s.eventAtMillis-System.currentTimeMillis(); val c=when { s.released->"PUBLIÉ"; d<=0->"MAINT."; d<3600000->"${(d/60000).coerceAtLeast(1)} min"; d<86400000->"H-${(d/3600000).coerceAtLeast(1)}"; else->"J-${(d/86400000).coerceAtLeast(1)}" }; return "$c · ${SimpleDateFormat("HH:mm",Locale.FRANCE).format(Date(s.eventAtMillis))}" }
+        private fun timing(s: MacroSnapshot): String { val d=s.eventAtMillis-System.currentTimeMillis(); val c=when { s.released->"PUBLIÉ"; d<=0->"RÉS. EN ATTENTE"; d<3600000->"${(d/60000).coerceAtLeast(1)} min"; d<86400000->"H-${(d/3600000).coerceAtLeast(1)}"; else->"J-${(d/86400000).coerceAtLeast(1)}" }; return "$c · ${SimpleDateFormat("dd/MM HH:mm",Locale.FRANCE).format(Date(s.eventAtMillis))}" }
         private fun buildViews(context: Context): RemoteViews {
             val v=RemoteViews(context.packageName,R.layout.widget_macro); val s=MacroRepository.cached(context); val s2=MacroRepository.cachedSecond(context)
             if(s==null){ v.setTextViewText(R.id.macroTitle,"MACRO");v.setTextViewText(R.id.macroEvent,"Chargement…");v.setTextViewText(R.id.macroCountdown,"—");v.setTextViewText(R.id.macroForecast,"Att. —");v.setTextViewText(R.id.macroActual,"Rés. —");v.setTextViewText(R.id.macroPrevious,"Préc. —") }

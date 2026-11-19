@@ -25,9 +25,9 @@ object IbkrFlexRepository {
         val nav: MutableMap<LocalDate, Double> = mutableMapOf()
     )
 
-    fun refresh(context: Context, timeframe: PortfolioTimeframe = PortfolioTimeframeStore.get(context)): IbkrPortfolioSnapshot {
+    fun refresh(context: Context, timeframe: PortfolioTimeframe = PortfolioTimeframeStore.get(context), force: Boolean = false): IbkrPortfolioSnapshot {
         val credentials = BrokerConnectionStore.ibkrFlexCredentials(context) ?: error("Token Flex ou Query ID absent")
-        val snapshot = summarize(IbkrFlexClient.statement(context, credentials), timeframe, LocalDate.now())
+        val snapshot = summarize(IbkrFlexClient.statement(context, credentials, force), timeframe, LocalDate.now())
         synchronized(BrokerConnectionStore) {
             require(BrokerConnectionStore.ibkrFlexCredentials(context) == credentials) { "Connexion IBKR modifiée" }
             if (cached(context)?.reportDate?.isAfter(snapshot.reportDate) != true) {
@@ -61,7 +61,7 @@ object IbkrFlexRepository {
                 "EquitySummaryByReportDateInBase", "EquitySummaryByReportDateInBaseCurrency" -> account?.let {
                     val date = flexDate(attrs["reportDate"]) ?: return@let
                     val amount = attrs.flexNumber("total") ?: return@let
-                    val currency = attrs["currency"].orEmpty().ifBlank { it.base }
+                    val currency = attrs["currency"].orEmpty().takeUnless { code -> code.isBlank() || code == "BASE_SUMMARY" } ?: it.base
                     val eur = flexAmountInEur(amount, currency, it.base, attrs)
                         ?: error("Valeur nette IBKR en $currency · conversion EUR indisponible")
                     val previous = it.nav.put(date, eur)

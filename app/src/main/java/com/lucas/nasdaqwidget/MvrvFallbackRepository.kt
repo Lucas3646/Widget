@@ -26,9 +26,11 @@ object MvrvFallbackRepository {
         }
     }
 
-    fun cached(context: Context): Double? {
+    fun cached(context: Context): MvrvSnapshot? {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return if (p.contains("z")) Double.fromBits(p.getLong("z", 0L)) else null
+        val fetchedAt = p.getLong("updatedAt", 0L)
+        val value = Double.fromBits(p.getLong("z", Double.NaN.toBits()))
+        return if (fetchedAt > 0 && value.isFinite()) MvrvSnapshot(value, null, null, fetchedAt) else null
     }
 
     fun lastError(context: Context): String? =
@@ -59,7 +61,7 @@ object MvrvFallbackRepository {
                 is String -> raw.toDoubleOrNull()
                 else -> null
             }
-            value ?: error("CM: CapMVRVZ missing")
+            value?.takeIf(Double::isFinite) ?: error("CM: CapMVRVZ missing")
         } finally {
             c.disconnect()
         }

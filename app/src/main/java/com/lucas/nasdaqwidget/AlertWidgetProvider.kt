@@ -16,8 +16,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -94,7 +92,7 @@ class AlertWidgetProvider : AppWidgetProvider() {
                     views.setTextViewText(symbolIds[index], rule.symbol)
                     views.setTextViewText(conditionIds[index], "${rule.operator} ${valueFormat.format(rule.threshold)}")
                     views.setTextViewText(priceIds[index], value?.let(valueFormat::format) ?: "--")
-                    views.setTextViewText(stateIds[index], if (triggered) "✓" else "○")
+                    views.setTextViewText(stateIds[index], when { value == null -> "—"; triggered -> "✓"; else -> "○" })
                     views.setTextColor(conditionIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.rgb(142, 160, 178))
                     views.setTextColor(priceIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.WHITE)
                     views.setTextColor(stateIds[index], if (triggered) Color.rgb(56, 242, 122) else Color.rgb(102, 120, 138))
@@ -107,11 +105,11 @@ class AlertWidgetProvider : AppWidgetProvider() {
                 }
             }
 
-            val updatedAt = AlertMarketRepository.lastUpdated(context)
-            val updatedLabel = if (updatedAt > 0) {
-                "MAJ ${SimpleDateFormat("HH:mm", Locale.FRANCE).format(Date(updatedAt))} · toucher pour actualiser"
-            } else {
-                "Touchez pour charger les prix"
+            val unavailableCount = decorated.count { it.second == null }
+            val updatedLabel = when {
+                allRules.isEmpty() -> "Touchez pour gérer les alertes"
+                unavailableCount > 0 -> "$unavailableCount cours ancien ou indisponible"
+                else -> "Cours récents · toucher pour actualiser"
             }
             views.setTextViewText(R.id.alertUpdatedText, updatedLabel)
 
